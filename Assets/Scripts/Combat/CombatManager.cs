@@ -250,6 +250,24 @@ public class CombatManager : MonoBehaviour
     }
     
     /// <summary>
+    /// Dapatkan radius strafe unik per enemy berdasarkan slot.
+    /// Setiap enemy di orbit berbeda untuk menghindari tabrakan.
+    /// </summary>
+    /// <param name="baseRadius">Radius dasar dari CircleStrafeBehaviour</param>
+    /// <param name="radiusOffset">Jarak antar orbit (default 0.6f)</param>
+    public float GetEnemyStrafeRadius(GameObject enemy, float baseRadius, float radiusOffset = 0.6f)
+    {
+        if (enemySlots.TryGetValue(enemy, out int slot))
+        {
+            // Slot 0 = baseRadius, Slot 1 = baseRadius + 0.6, Slot 2 = baseRadius + 1.2, etc.
+            return baseRadius + (slot * radiusOffset);
+        }
+        // Fallback: gunakan InstanceID untuk generate radius konsisten
+        int fallbackSlot = Mathf.Abs(enemy.GetInstanceID()) % numberOfSlots;
+        return baseRadius + (fallbackSlot * radiusOffset);
+    }
+    
+    /// <summary>
     /// Cari slot yang berlawanan dengan enemy lain (untuk variety).
     /// </summary>
     public int FindOppositeSlot(GameObject enemy)

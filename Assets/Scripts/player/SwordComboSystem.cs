@@ -72,6 +72,13 @@ public class SwordComboSystem : MonoBehaviour
         // Jika attack selesai
         if (wasAttacking && !isAttacking)
         {
+            // NOTE: Hitbox disable is now handled ONLY by Animation Events
+            // Only call EndAttack here for state cleanup
+            if (playerController != null)
+            {
+                playerController.EndAttack();
+            }
+            
             if (showDebugLogs)
                 Debug.Log($"[Combo] Attack {currentComboStep} finished");
 

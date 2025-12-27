@@ -9,12 +9,24 @@ using System.Collections.Generic;
 /// </summary>
 public class SlicedStaminaBar : MonoBehaviour
 {
-    [Header("=== FRAME SPRITES ===")]
-    [Tooltip("Frame saat stamina penuh/idle (hijau + petir)")]
-    [SerializeField] private Sprite frameFullSprite;
-    [Tooltip("Frame saat player sprint/stamina rendah (merah + petir)")]
-    [SerializeField] private Sprite frameEmptySprite;
+    [Header("=== FRAME SPRITE ===")]
+    [Tooltip("Frame stamina bar (coklat dengan petir) - TIDAK BERUBAH")]
+    [SerializeField] private Sprite frameSprite;
     [SerializeField] private Image frameImage;
+    [Tooltip("RectTransform dari frame untuk auto-resize (opsional)")]
+    [SerializeField] private RectTransform frameRectTransform;
+    
+    [Header("=== FRAME AUTO-RESIZE ===")]
+    [Tooltip("Aktifkan auto-resize frame sesuai jumlah segment")]
+    [SerializeField] private bool autoResizeFrame = true;
+    [Tooltip("Padding horizontal kiri-kanan frame (untuk icon petir dll)")]
+    [SerializeField] private float framePaddingLeft = 4f;
+    [Tooltip("Padding horizontal kanan frame (untuk icon petir dll)")]
+    [SerializeField] private float framePaddingRight = 20f; // Lebih besar untuk icon petir
+    [Tooltip("Tinggi frame (0 = native height)")]
+    [SerializeField] private float frameHeight = 0f;
+    [Tooltip("Tambahan lebar manual utk fine-tuning (bisa minus)")]
+    [SerializeField] private float widthModifier = 0f;
     
     [Header("=== BAR FILL SPRITES ===")]
     [Tooltip("Potongan KIRI dari bar hijau")]
@@ -26,9 +38,18 @@ public class SlicedStaminaBar : MonoBehaviour
     
     [Header("=== FILL BAR SETUP ===")]
     [SerializeField] private Transform fillContainer; // Parent untuk fill images
-    [SerializeField] private int middleSegmentCount = 5; // Berapa banyak segment tengah
-    [Tooltip("Skala ukuran segment (1 = native size, 2 = 2x lebih besar, dst)")]
-    [SerializeField] private float segmentScale = 3f; // Scale multiplier untuk segment
+    [SerializeField] private int middleSegmentCount = 4; // 4 tengah + 2 caps = 6 total
+    [Tooltip("Skala ukuran BAR FILL (1 = native size)")]
+    [SerializeField] private float segmentScale = 1f; // Scale untuk bar fill
+    
+    [Header("=== MANUAL SEGMENT SIZE ===")]
+    [Tooltip("Check ini jika ingin atur ukuran manual (abaikan scale)")]
+    [SerializeField] private bool overrideSegmentSize = false;
+    [SerializeField] private float manualSegmentWidth = 10f;
+    [SerializeField] private float manualSegmentHeight = 20f;
+    
+    // [Tooltip("Skala ukuran FRAME (1 = native size)")]
+    // [SerializeField] private float frameScale = 1f; // REMOVED: Tidak dipakai lagi
     
     [Header("=== STAMINA SETTINGS ===")]
     [SerializeField] private float maxStamina = 100f;
@@ -37,15 +58,12 @@ public class SlicedStaminaBar : MonoBehaviour
     [SerializeField] private float regenRate = 15f;
     [SerializeField] private float regenDelay = 1f;
     
-    [Header("=== THRESHOLD ===")]
-    [Tooltip("Di bawah persentase ini, frame berubah ke empty")]
-    [SerializeField] private float frameChangeThreshold = 0.3f; // 30%
-    
     // Runtime
     private List<Image> fillImages = new List<Image>();
     private float lastUseTime;
     private bool isSprinting = false;
     private PlayerAnimationController playerController;
+    private float totalFillWidth = 0f; // Total width dari semua fill segments
     
     // Public properties
     public float CurrentStamina => currentStamina;
@@ -82,6 +100,7 @@ public class SlicedStaminaBar : MonoBehaviour
             Destroy(child.gameObject);
         }
         fillImages.Clear();
+        totalFillWidth = 0f; // Reset total width
         
         // Create Left Cap
         if (barLeftCap != null)
@@ -104,7 +123,10 @@ public class SlicedStaminaBar : MonoBehaviour
             CreateFillImage("RightCap", barRightCap);
         }
         
-        Debug.Log($"[SlicedStaminaBar] Created {fillImages.Count} fill images");
+        // Auto-resize frame setelah semua segment dibuat
+        ResizeFrame();
+        
+        Debug.Log($"[SlicedStaminaBar] Created {fillImages.Count} fill images, Total Width: {totalFillWidth}px");
     }
     
     void CreateFillImage(string name, Sprite sprite)
@@ -123,11 +145,52 @@ public class SlicedStaminaBar : MonoBehaviour
         rt.localPosition = Vector3.zero;
         rt.localScale = Vector3.one;
         
-        // Apply scale ke size (bukan transform scale)
-        rt.sizeDelta = rt.sizeDelta * segmentScale;
+        // Apply size
+        if (overrideSegmentSize)
+        {
+            // Pake ukuran manual
+            rt.sizeDelta = new Vector2(manualSegmentWidth, manualSegmentHeight);
+        }
+        else
+        {
+            // Pake native size * scale
+            rt.sizeDelta = rt.sizeDelta * segmentScale;
+        }
+        
+        // Track total width
+        totalFillWidth += rt.sizeDelta.x;
         
         // Add to list
         fillImages.Add(img);
+    }
+    
+    /// <summary>
+    /// Resize frame agar sesuai dengan total width dari fill segments
+    /// </summary>
+    /// <summary>
+    /// Resize frame agar sesuai dengan total width dari fill segments
+    /// </summary>
+    void ResizeFrame()
+    {
+        if (!autoResizeFrame || frameRectTransform == null) return;
+        
+        // SIMPLE: Frame width = padding kiri + total bar + padding kanan + MANUAL MODIFIER
+        float newWidth = framePaddingLeft + totalFillWidth + framePaddingRight + widthModifier;
+        
+        // KITA GUNAKAN TINGGI MANUAL DARI INSPECTOR (Current Height)
+        // Jadi script TIDAK mengubah tinggi frame, hanya lebarnya saja.
+        float currentHeight = frameRectTransform.sizeDelta.y;
+        
+        // Jika tinggi masih 0 (belum di-set), baru kita kasih default
+        if (currentHeight <= 1f) 
+        {
+             currentHeight = 20f;
+        }
+
+        // Apply size: Width baru, Height tetap
+        frameRectTransform.sizeDelta = new Vector2(newWidth, currentHeight);
+        
+        Debug.Log($"[SlicedStaminaBar] Frame Resized Width to: {newWidth} | Keeping Height: {currentHeight}");
     }
     
     void Update()
@@ -181,19 +244,10 @@ public class SlicedStaminaBar : MonoBehaviour
     /// </summary>
     void UpdateFrame()
     {
-        if (frameImage == null) return;
+        if (frameImage == null || frameSprite == null) return;
         
-        // Ganti frame berdasarkan sprint status ATAU stamina level
-        bool shouldShowEmptyFrame = isSprinting || StaminaPercent <= frameChangeThreshold;
-        
-        if (shouldShowEmptyFrame && frameEmptySprite != null)
-        {
-            frameImage.sprite = frameEmptySprite;
-        }
-        else if (frameFullSprite != null)
-        {
-            frameImage.sprite = frameFullSprite;
-        }
+        // Frame tetap sama (tidak berubah-ubah)
+        frameImage.sprite = frameSprite;
     }
     
     /// <summary>

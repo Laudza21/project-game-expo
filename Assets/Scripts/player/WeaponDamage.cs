@@ -7,7 +7,18 @@ using UnityEngine;
 public class WeaponDamage : MonoBehaviour
 {
     [Header("Damage Settings")]
-    [SerializeField] private int damageAmount = 10;
+    [SerializeField] private int baseDamageAmount = 10;
+    private int damageAmount; // Actual damage (base + bonus)
+    
+    void Awake()
+    {
+        damageAmount = baseDamageAmount;
+    }
+
+    public void SetBonusDamage(int bonus)
+    {
+        damageAmount = baseDamageAmount + bonus;
+    }
     [SerializeField] private float knockbackForce = 300f; // Increased for high mass enemy
     [SerializeField] private LayerMask enemyLayer; // Optional: filter untuk enemy layer
     

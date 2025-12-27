@@ -117,6 +117,13 @@ public abstract class BaseEnemyAI : MonoBehaviour
         {
             playerBodyCollider = GetBodyCollider(player);
         }
+        
+        // DEBUG: Verify correct colliders were found
+        #if UNITY_EDITOR
+        Debug.Log($"<color=cyan>[{gameObject.name}] Collider Setup:</color> " +
+            $"myBodyCollider = {(myBodyCollider != null ? myBodyCollider.gameObject.name : "NULL")} | " +
+            $"playerBodyCollider = {(playerBodyCollider != null ? playerBodyCollider.gameObject.name : "NULL")}");
+        #endif
 
         SetupPatrol();
         ChangeState(AIState.Patrol);
@@ -153,10 +160,34 @@ public abstract class BaseEnemyAI : MonoBehaviour
     protected Collider2D GetBodyCollider(Transform target)
     {
         Collider2D[] allColliders = target.GetComponentsInChildren<Collider2D>();
+        
+        // Priority 1: Look for collider on child named "Hitbox" or "Hurtbox" (explicit naming)
         foreach (var col in allColliders)
         {
-            if (!col.isTrigger)
+            string lowerName = col.gameObject.name.ToLower();
+            if (lowerName.Contains("hitbox") || lowerName.Contains("hurtbox"))
+            {
                 return col;
+            }
+        }
+        
+        // Priority 2: Trigger Collider on CHILD object (not parent - skip depth sort collider)
+        foreach (var col in allColliders)
+        {
+            // Skip parent collider (depth sort), prefer child triggers
+            if (col.isTrigger && col.transform != target) return col;
+        }
+        
+        // Priority 3: Any trigger collider (fallback for old setups)
+        foreach (var col in allColliders)
+        {
+            if (col.isTrigger) return col;
+        }
+
+        // Priority 4: Non-Trigger Collider (Physics/Feet) - Last resort fallback
+        foreach (var col in allColliders)
+        {
+            if (!col.isTrigger) return col;
         }
         return null;
     }

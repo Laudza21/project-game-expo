@@ -72,8 +72,14 @@ public class SeparationBehaviour : SteeringBehaviour
             // Skip self
             if (neighbor.gameObject == gameObject)
                 continue;
-
-            Vector2 neighborPos = neighbor.transform.position;
+            
+            // Use ROOT parent position, not child Hitbox position
+            // This handles the case where Hitbox is a child object on Enemy layer
+            Transform neighborRoot = neighbor.transform.root;
+            if (neighborRoot == transform.root)
+                continue; // Skip if same root parent (self)
+                
+            Vector2 neighborPos = neighborRoot.position;
             Vector2 diff = agent.position - neighborPos;
             float currentDistance = diff.magnitude;
 
@@ -83,7 +89,8 @@ public class SeparationBehaviour : SteeringBehaviour
             
             // === PREDICTIVE AVOIDANCE ===
             // Prediksi posisi di masa depan berdasarkan velocity
-            Rigidbody2D neighborRb = neighbor.attachedRigidbody;
+            // Get Rigidbody from root parent, not from child collider
+            Rigidbody2D neighborRb = neighborRoot.GetComponent<Rigidbody2D>();
             Vector2 predictedDiff = diff;
             float predictedDistance = currentDistance;
             

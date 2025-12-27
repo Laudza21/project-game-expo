@@ -14,9 +14,38 @@ public class PlayerAnimationController : MonoBehaviour
     private SwordComboSystem swordComboSystem;
 
     [Header("Movement Settings")]
-    [SerializeField] private float walkSpeed = 3f;
-    [SerializeField] private float runSpeed = 6f;
+    [Header("Movement Settings")]
+    [SerializeField] private float baseWalkSpeed = 3f;
+    [SerializeField] private float baseRunSpeed = 6f;
+    private float walkSpeed;
+    private float runSpeed;
+
+    [Header("Ranged Combat Settings")]
+    [SerializeField] private GameObject arrowPrefab;
+    [SerializeField] private float arrowSpawnDistance = 0.5f;
+    [SerializeField] private float arrowSpawnHeight = 0.5f; // Raise spawn point from feet to hands
+
     [SerializeField] private float attackSpeedMultiplier = 0.7f; // Speed saat attack (70% dari normal - Stardew Valley style)
+
+    private float _currentSpeedMultiplier = 1f;
+
+    void Start()
+    {
+        // Initialize speeds
+        UpdateSpeeds();
+    }
+
+    public void SetSpeedMultiplier(float multiplier)
+    {
+        _currentSpeedMultiplier = multiplier;
+        UpdateSpeeds();
+    }
+
+    private void UpdateSpeeds()
+    {
+        walkSpeed = baseWalkSpeed * _currentSpeedMultiplier;
+        runSpeed = baseRunSpeed * _currentSpeedMultiplier;
+    }
     [SerializeField] private bool canMoveWhileAttacking = false; // Attack = commit, player stops during attack
 
     private Animator animator;
@@ -30,6 +59,9 @@ public class PlayerAnimationController : MonoBehaviour
     // UNIVERSAL DIRECTION LOCK: Prevent ANY direction change dalam waktu singkat
     private float directionLockTimer = 0f;
     private const float DIRECTION_LOCK_DURATION = 0.3f; // 300ms lock setelah ganti arah
+
+    // Stamina reference untuk check sebelum sprint
+    private SlicedStaminaBar staminaBar;
 
     // Current weapon
     private WeaponType currentWeapon = WeaponType.Pickaxe;
@@ -50,7 +82,7 @@ public class PlayerAnimationController : MonoBehaviour
         // DEADZONE: Threshold lebih besar untuk prevent noise dari Input System
         if (moveInput.sqrMagnitude > 0.25f) // 0.25f = magnitude ~0.5, cukup besar untuk ignore trailing input
         {
-            speed = isRunning ? runSpeed : walkSpeed;
+            speed = IsRunning() ? runSpeed : walkSpeed;
             
             // STARDEW VALLEY STYLE: SNAP LANGSUNG, NO BUFFER!
             // Horizontal priority sudah di-handle dalam SnapToCardinalDirection
@@ -205,6 +237,13 @@ public class PlayerAnimationController : MonoBehaviour
             Debug.LogWarning("SwordComboSystem not found! Combo attacks will not work.");
         }
         
+        // Find stamina bar untuk cek sebelum sprint
+        staminaBar = FindFirstObjectByType<SlicedStaminaBar>();
+        if (staminaBar == null)
+        {
+            Debug.LogWarning("SlicedStaminaBar not found! Stamina check disabled.");
+        }
+        
         // PENTING: Set animator dengan last direction di awal
         // Ini mencegah snap ke (0,0) saat start
         // CATATAN: lastDirection default = Vector2.down (line 28)
@@ -285,8 +324,8 @@ public class PlayerAnimationController : MonoBehaviour
 
     void FixedUpdate()
     {
-        // Move the player
-        float currentSpeed = isRunning ? runSpeed : walkSpeed;
+        // Move the player - gunakan IsRunning() yang sudah check stamina
+        float currentSpeed = IsRunning() ? runSpeed : walkSpeed;
 
         // Reduce speed saat attacking
         if (isAttacking && canMoveWhileAttacking)
@@ -306,6 +345,7 @@ public class PlayerAnimationController : MonoBehaviour
         // FAILSAFE: Reset isAttacking if we are not in an attack animation
         // This handles cases where Animation Events are missing (like in Pickaxe/Bow)
         // SKIP failsafe for Sword - SwordComboSystem handles its own state
+        // NOTE: Hitbox disable is now handled ONLY by Animation Events
         if (isAttacking && currentWeapon != WeaponType.Sword)
         {
             AnimatorStateInfo stateInfo = animator.GetCurrentAnimatorStateInfo(0);
@@ -320,7 +360,7 @@ public class PlayerAnimationController : MonoBehaviour
                 // Add a small delay/buffer check to avoid resetting during transition
                 if (!animator.IsInTransition(0))
                 {
-                    // Debug.Log("⚠️ [Failsafe] Resetting stuck attack state!");
+                    // Only reset attack state, hitbox controlled by Animation Event
                     EndAttack();
                 }
             }
@@ -415,15 +455,16 @@ public class PlayerAnimationController : MonoBehaviour
     {
         if (moveInput.sqrMagnitude > 0.1f)
         {
-            // Update ke arah movement saat ini
+            // ALL WEAPONS: Use 4-directional cardinal for consistent hitbox behavior
             lastDirection = SnapToCardinalDirection(moveInput.normalized);
+            
             directionLockTimer = 0f; // Reset lock timer
             
             // Update animator juga
             animator.SetFloat(Horizontal, lastDirection.x);
             animator.SetFloat(Vertical, lastDirection.y);
             
-            // Debug.Log($"<color=lime>[ForceUpdateAttackDirection] Updated to: {lastDirection}</color>");
+            Debug.Log($"<color=lime>[ForceUpdateAttackDirection] Weapon: {currentWeapon}, Direction: {lastDirection}</color>");
         }
         // Jika tidak bergerak, gunakan lastDirection yang ada (facing direction)
     }
@@ -435,11 +476,24 @@ public class PlayerAnimationController : MonoBehaviour
 
     /// <summary>
     /// Check apakah player sedang sprint/running
-    /// Digunakan oleh SegmentedStaminaBar untuk mengurangi stamina
+    /// Digunakan oleh SlicedStaminaBar untuk mengurangi stamina
+    /// Player tidak bisa lari jika stamina habis!
     /// </summary>
     public bool IsRunning()
     {
-        return isRunning && IsMoving(); // Sprint hanya aktif jika sedang bergerak
+        // Tidak bisa sprint jika tidak bergerak
+        if (!IsMoving()) return false;
+        
+        // Jika tombol sprint tidak ditekan, tidak running
+        if (!isRunning) return false;
+        
+        // Check stamina - tidak bisa lari jika stamina habis!
+        if (staminaBar != null && !staminaBar.HasStamina)
+        {
+            return false; // Force walk karena stamina habis
+        }
+        
+        return true;
     }
 
     /// <summary>
@@ -496,12 +550,31 @@ public class PlayerAnimationController : MonoBehaviour
         
         if (hitbox != null)
         {
-            // SNAP to PURE CARDINAL direction (4-way only: up/down/left/right)
-            // This ensures the hitbox matches the 4-directional animation
-            Vector2 cardinalDir = GetPureCardinalDirection(lastDirection);
+            Vector2 hitboxDir;
+            
+            // DEBUG: Log lastDirection untuk troubleshooting
+            Debug.Log($"<color=magenta>lastDirection BEFORE snap: {lastDirection}</color>");
+            
+            // Jika lastDirection terlalu kecil, gunakan fallback dari animator
+            Vector2 dirToUse = lastDirection;
+            if (lastDirection.sqrMagnitude < 0.1f)
+            {
+                // Fallback: ambil dari animator parameters
+                dirToUse = new Vector2(animator.GetFloat(Horizontal), animator.GetFloat(Vertical));
+                Debug.Log($"<color=orange>lastDirection was zero! Using animator direction: {dirToUse}</color>");
+            }
+            
+            // ALL WEAPONS: Use 4-directional cardinal (same as pickaxe)
+            // Sword now uses pure cardinal like pickaxe for consistent hitbox behavior
+            hitboxDir = GetPureCardinalDirection(dirToUse);
+            
+            if (currentWeapon == WeaponType.Sword)
+            {
+                Debug.Log($"<color=yellow>Sword 4-way direction: {hitboxDir} (from {dirToUse})</color>");
+            }
             
             // Calculate world position offset (not local, to avoid flip issues)
-            Vector3 worldOffset = (Vector3)cardinalDir * hitboxOffset;
+            Vector3 worldOffset = (Vector3)hitboxDir * hitboxOffset;
             hitbox.position = transform.position + worldOffset;
             
             // PENTING: Reset hit enemies untuk attack baru
@@ -529,11 +602,50 @@ public class PlayerAnimationController : MonoBehaviour
     }
 
     /// <summary>
+    /// Spawn Arrow Projectile - Dipanggil via Animation Event (Bow)
+    /// </summary>
+    public void SpawnArrow()
+    {
+        if (arrowPrefab == null)
+        {
+            Debug.LogWarning("Arrow Prefab is empty in PlayerAnimationController!");
+            return;
+        }
+
+        Debug.Log("<color=lime>🏹 [AnimEvent] SpawnArrow() CALLED!</color>");
+
+        // Calculate spawn direction based on last safe direction
+        Vector2 spawnDir = lastDirection;
+        
+        // Fallback if zero
+        if (spawnDir.sqrMagnitude < 0.1f)
+        {
+             spawnDir = new Vector2(animator.GetFloat(Horizontal), animator.GetFloat(Vertical));
+        }
+
+        // Snap to cardinal for clean visuals
+        spawnDir = GetPureCardinalDirection(spawnDir);
+
+        // Calculate spawn position (Distance + Height Offset from feet)
+        Vector3 spawnPos = transform.position + (Vector3.up * arrowSpawnHeight) + ((Vector3)spawnDir * arrowSpawnDistance);
+
+        // Instantiate
+        GameObject arrow = Instantiate(arrowPrefab, spawnPos, Quaternion.identity);
+        
+        // Launch logic
+        ArrowProjectile projectile = arrow.GetComponent<ArrowProjectile>();
+        if (projectile != null)
+        {
+            projectile.Launch(spawnDir);
+        }
+    }
+
+    /// <summary>
     /// Disable weapon hitbox - Dipanggil via Animation Event
     /// </summary>
     public void DisableWeaponHitbox()
     {
-        // Debug.Log("<color=gray>🗡️ [AnimEvent] DisableWeaponHitbox() CALLED!</color>");
+        Debug.Log("<color=red>🗡️ [AnimEvent] DisableWeaponHitbox() CALLED!</color>");
         
         // Disable ALL weapon hitboxes (in case multiple are active)
         DisableHitboxByName("WeaponHitbox_Sword");
@@ -575,10 +687,47 @@ public class PlayerAnimationController : MonoBehaviour
     
     private void DisableHitboxByName(string name)
     {
+        // Try direct child first
         Transform hitbox = transform.Find(name);
+        
+        // If not found, try recursive search in all children
+        if (hitbox == null)
+        {
+            hitbox = FindChildRecursive(transform, name);
+        }
+        
         if (hitbox != null)
         {
+            // Disable the collider first (more reliable)
+            Collider2D col = hitbox.GetComponent<Collider2D>();
+            if (col != null)
+            {
+                col.enabled = false;
+                Debug.Log($"<color=gray>🗡️ [DisableHitboxByName] Disabled collider on: {name}</color>");
+            }
+            
+            // Then disable the GameObject
             hitbox.gameObject.SetActive(false);
+            Debug.Log($"<color=gray>🗡️ [DisableHitboxByName] Disabled GameObject: {name} | Active={hitbox.gameObject.activeSelf}</color>");
         }
+        else
+        {
+            Debug.LogWarning($"<color=orange>⚠️ [DisableHitboxByName] Hitbox NOT FOUND: {name}</color>");
+        }
+    }
+    
+    // Helper to find child recursively
+    private Transform FindChildRecursive(Transform parent, string name)
+    {
+        foreach (Transform child in parent)
+        {
+            if (child.name == name)
+                return child;
+            
+            Transform found = FindChildRecursive(child, name);
+            if (found != null)
+                return found;
+        }
+        return null;
     }
 }

@@ -13,9 +13,9 @@ TagManager:
   - Water
   - UI
   - Enemy
-  - 
-  - 
-  - 
+  - collect
+  - Obstacle
+  - DepthSort
   - 
   - 
   - 
@@ -45,14 +45,14 @@ TagManager:
   - name: background
     uniqueID: 1764348655
     locked: 0
-  - name: player
-    uniqueID: 1997618329
-    locked: 0
-  - name: Enemy
-    uniqueID: 3573231333
-    locked: 0
   - name: obstacle
     uniqueID: 677589043
+    locked: 0
+  - name: Traps
+    uniqueID: 3391689839
+    locked: 0
+  - name: Actors
+    uniqueID: 3812257779
     locked: 0
   m_RenderingLayers:
   - Default

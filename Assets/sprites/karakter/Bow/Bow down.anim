@@ -45,24 +45,8 @@ AnimationClip:
     m_Center: {x: 0, y: 0, z: 0}
     m_Extent: {x: 0, y: 0, z: 0}
   m_ClipBindingConstant:
-    genericBindings:
-    - serializedVersion: 2
-      path: 0
-      attribute: 0
-      script: {fileID: 0}
-      typeID: 212
-      customType: 23
-      isPPtrCurve: 1
-      isIntCurve: 0
-      isSerializeReferenceCurve: 0
-    pptrCurveMapping:
-    - {fileID: -3678304241555730307, guid: 893c9f2d9b5d3444e990fa0af6d98413, type: 3}
-    - {fileID: -5534190220298447246, guid: 893c9f2d9b5d3444e990fa0af6d98413, type: 3}
-    - {fileID: 3047833900665092940, guid: 893c9f2d9b5d3444e990fa0af6d98413, type: 3}
-    - {fileID: 3865784576092160751, guid: 893c9f2d9b5d3444e990fa0af6d98413, type: 3}
-    - {fileID: -5398480233080952409, guid: 893c9f2d9b5d3444e990fa0af6d98413, type: 3}
-    - {fileID: -4228650375571892300, guid: 893c9f2d9b5d3444e990fa0af6d98413, type: 3}
-    - {fileID: 5320220602793659239, guid: 893c9f2d9b5d3444e990fa0af6d98413, type: 3}
+    genericBindings: []
+    pptrCurveMapping: []
   m_AnimationClipSettings:
     serializedVersion: 2
     m_AdditiveReferencePoseClip: {fileID: 0}
@@ -89,7 +73,7 @@ AnimationClip:
   m_HasMotionFloatCurves: 0
   m_Events:
   - time: 0.5
-    functionName: EndAttack
+    functionName: SpawnArrow
     data: 
     objectReferenceParameter: {fileID: 0}
     floatParameter: 0

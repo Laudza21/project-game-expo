@@ -54,11 +54,11 @@ public class GoblinSpearAI : BaseEnemyAI
     
     [Header("Feint Settings")]
     [Tooltip("Jarak minimum yang harus dicapai sebelum retreat (harus dekat player!)")]
-    [SerializeField] private float feintApproachDistance = 1.5f;
+    [SerializeField] private float feintApproachDistance = 3.0f; // Increased from 1.5 for visible retreat
     [Tooltip("Max waktu approach sebelum force retreat (safety fallback)")]
     [SerializeField] private float feintMaxApproachTime = 2.0f;
     [Tooltip("Durasi phase retreat")]
-    [SerializeField] private float feintRetreatDuration = 0.5f;
+    [SerializeField] private float feintRetreatDuration = 1.0f; // Increased from 0.5 for longer retreat
     
     [Header("Retreat Settings")]
     [SerializeField] private float retreatDuration = 0.5f;
@@ -68,6 +68,25 @@ public class GoblinSpearAI : BaseEnemyAI
     public float retreatMinDistance = 2.5f;
     [SerializeField] private float maxRetreatExtendTime = 1.5f;
     public float optimalDistance = 4f;
+    
+    [Header("Stand and Fight Settings")]
+    [Tooltip("Jika player mendekat dalam jarak ini saat retreat/pacing, enemy akan counter-attack")]
+    [SerializeField] private float chaseBackTriggerDistance = 1.5f;
+    [Tooltip("Jika velocity di bawah threshold ini saat retreat, dianggap cornered/stuck")]
+    [SerializeField] private float corneredVelocityThreshold = 0.3f;
+    [Tooltip("Durasi stuck sebelum dianggap cornered (detik)")]
+    [SerializeField] private float corneredTimeThreshold = 0.4f;
+    [Tooltip("Cooldown setelah chase back trigger (detik) - mencegah enemy terlalu agresif")]
+    [SerializeField] private float chaseBackCooldown = 2.0f;
+    
+    [Header("Flee Exhaustion Settings")]
+    [Tooltip("Max durasi enemy bisa flee/retreat terus-menerus sebelum harus berhenti")]
+    [SerializeField] private float maxContinuousFleeTime = 3.0f;
+    [Tooltip("Chance untuk langsung Attack setelah flee exhaustion (0-1)")]
+    [Range(0f, 1f)] [SerializeField] private float exhaustionAttackChance = 0.3f;
+    [Tooltip("Chance untuk BlindSpotSeek setelah flee exhaustion (0-1)")]
+    [Range(0f, 1f)] [SerializeField] private float exhaustionBlindSpotChance = 0.4f;
+    // Sisanya = Pacing (stand ground)
     
     [Header("Stamina Fatigue System")]
     [Tooltip("Max stamina enemy")]
@@ -83,7 +102,7 @@ public class GoblinSpearAI : BaseEnemyAI
     
     [Header("Aggression Probability Shift")]
     [Tooltip("Base chance untuk attack (vs tactical)")]
-    [SerializeField] private float baseAggressionChance = 0.4f;
+    [SerializeField] private float baseAggressionChance = 0.4f; // Original value restored
     [Tooltip("Increase aggression chance per consecutive tactical move")]
     [SerializeField] private float aggressionIncreasePerTactical = 0.2f;
     [Tooltip("Max aggression chance cap")]
@@ -103,6 +122,13 @@ public class GoblinSpearAI : BaseEnemyAI
     public Vector2 retreatStartPosition;
     public bool hasRetreatEnough;
     
+    // Cornered Detection Variables
+    private float corneredTimer = 0f;
+    private Vector2 lastPosition;
+    private float lastChaseBackTime = -999f; // Cooldown tracker untuk chase back
+    private float continuousFleeStartTime = -999f; // Track kapan mulai flee terus-menerus
+    private bool isInContinuousFlee = false;
+    
     // Pacing State Variables
     private float pacingEndTime;
     private float vulnerableWindowEndTime;
@@ -118,6 +144,7 @@ public class GoblinSpearAI : BaseEnemyAI
     private bool isFeintApproaching;
     private Vector2 feintStartPosition;
     private float feintPhaseEndTime;
+    private float feintRetreatStartTime; // Track when retreat started for grace period
     
     // Player reference for blind spot detection
     private PlayerAnimationController playerAnimController;
@@ -224,6 +251,9 @@ public class GoblinSpearAI : BaseEnemyAI
         bool isTouching = myBodyCollider != null && playerBodyCollider != null && myBodyCollider.IsTouching(playerBodyCollider);
         bool isInAttackRange = colliderDist <= attackRange || isTouching;
         
+        // DEBUG: Show chase state details every frame
+        LogDebug($"CHASE: ColliderDist={colliderDist:F2} | AttackRange={attackRange:F2} | InRange={isInAttackRange} | Touching={isTouching} | EngageRange={engagementRange:F2}", "white");
+        
         // Dalam attack range? Coba minta attack token!
         if (isInAttackRange && Time.time - lastAttackTime >= attackCooldown)
         {
@@ -291,7 +321,7 @@ public class GoblinSpearAI : BaseEnemyAI
         }
 
         // TACTICAL MODE: Circle Strafe / Feint
-        if (Random.value < 0.7f) // 70% of tactical is BlindSpot
+        if (Random.value < 0.7f) // 70% BlindSpot, 30% Feint (original balance)
         {
             // Circle strafe cari blind spot
             ChangeState(AIState.BlindSpotSeek);
@@ -344,6 +374,20 @@ public class GoblinSpearAI : BaseEnemyAI
     // ==========================================
     private void HandlePacingState(float distanceToPlayer)
     {
+        // === OPSI 2: Chase Back Trigger (dengan cooldown untuk balance) ===
+        // Jika player SANGAT dekat DAN cooldown sudah selesai, enemy react!
+        float colliderDist = GetColliderDistance();
+        bool chaseBackReady = Time.time - lastChaseBackTime >= chaseBackCooldown;
+        
+        if (colliderDist <= chaseBackTriggerDistance && chaseBackReady && Time.time - lastAttackTime >= attackCooldown)
+        {
+            LogDebug($"CHASE BACK during Pacing! Player too close (dist: {colliderDist:F2})", "red");
+            corneredTimer = 0f;
+            lastChaseBackTime = Time.time; // Set cooldown
+            ChangeState(AIState.Chase);
+            return;
+        }
+        
         // Check vulnerable window status
         if (Time.time < vulnerableWindowEndTime)
         {
@@ -357,6 +401,7 @@ public class GoblinSpearAI : BaseEnemyAI
             if (Time.time >= pacingEndTime)
             {
                 // isVulnerable = false;
+                corneredTimer = 0f;
                 DecideAfterPacing();
             }
             
@@ -381,6 +426,7 @@ public class GoblinSpearAI : BaseEnemyAI
         if (distanceToPlayer <= attackRange * 0.8f)
         {
             LogDebug("Pacing interrupted - Player too close! Attacking!", "yellow");
+            corneredTimer = 0f;
             ChangeState(AIState.Chase);
             return;
         }
@@ -388,6 +434,7 @@ public class GoblinSpearAI : BaseEnemyAI
         // Player kabur? Chase!
         if (distanceToPlayer > loseTargetRange)
         {
+            corneredTimer = 0f;
             ChangeState(AIState.Patrol);
             return;
         }
@@ -395,11 +442,50 @@ public class GoblinSpearAI : BaseEnemyAI
         // Jika masih dalam pacing distance, mundur sedikit
         if (distanceToPlayer < pacingMinDistance)
         {
+            // Track continuous flee time saat mundur dalam Pacing
+            if (!isInContinuousFlee)
+            {
+                isInContinuousFlee = true;
+                continuousFleeStartTime = Time.time;
+            }
+            
+            float fleeTime = Time.time - continuousFleeStartTime;
+            if (fleeTime >= maxContinuousFleeTime)
+            {
+                LogDebug($"FLEE EXHAUSTION during Pacing! (fled for {fleeTime:F1}s)", "yellow");
+                ResetFleeExhaustion();
+                DecideAfterFleeExhaustion();
+                return;
+            }
+            
             // Mundur perlahan dari player
             movementController.SetRetreatMode(player, false);
+            
+            // === OPSI 4: Cornered Detection saat Pacing ===
+            if (rb != null)
+            {
+                float currentVelocity = rb.linearVelocity.magnitude;
+                if (currentVelocity < corneredVelocityThreshold)
+                {
+                    corneredTimer += Time.deltaTime;
+                    if (corneredTimer >= corneredTimeThreshold)
+                    {
+                        LogDebug($"CORNERED during Pacing! Fighting back! (vel: {currentVelocity:F2})", "red");
+                        corneredTimer = 0f;
+                        ChangeState(AIState.Chase);
+                        return;
+                    }
+                }
+                else
+                {
+                    corneredTimer = 0f;
+                }
+            }
         }
         else
         {
+            corneredTimer = 0f; // Reset saat tidak mundur
+            
             // Sudah cukup jauh, berhenti dan mengamati
             movementController.StopMoving();
             if (rb != null) rb.linearVelocity = Vector2.zero;
@@ -419,12 +505,16 @@ public class GoblinSpearAI : BaseEnemyAI
         // Pacing selesai?
         if (Time.time >= pacingEndTime)
         {
+            corneredTimer = 0f;
             DecideAfterPacing();
         }
     }
     
     private void DecideAfterPacing()
     {
+        // Reset flee tracking karena Pacing selesai dengan cara normal
+        ResetFleeExhaustion();
+        
         // Setelah Pacing (vulnerable window), enemy biasanya langsung Chase
         // Ini membuat pattern lebih konsisten dan learnable
         // 70% Chase, 30% tactical lagi
@@ -442,6 +532,52 @@ public class GoblinSpearAI : BaseEnemyAI
         {
             ChangeState(AIState.Feint);
             LogDebug("Pacing -> Feint", "magenta");
+        }
+    }
+    
+    /// <summary>
+    /// Reset flee exhaustion tracking variables
+    /// </summary>
+    private void ResetFleeExhaustion()
+    {
+        isInContinuousFlee = false;
+        continuousFleeStartTime = -999f;
+    }
+    
+    /// <summary>
+    /// Decide next state after flee exhaustion dengan chance-based selection
+    /// </summary>
+    private void DecideAfterFleeExhaustion()
+    {
+        float roll = Random.value;
+        float colliderDist = GetColliderDistance();
+        
+        // Jika dalam attack range, langsung attack
+        if (colliderDist <= attackRange && Time.time - lastAttackTime >= attackCooldown)
+        {
+            LogDebug("Flee Exhaustion -> Attack (in range!)", "red");
+            ChangeState(AIState.Attack);
+            return;
+        }
+        
+        // Chance-based selection
+        if (roll < exhaustionAttackChance)
+        {
+            // Attack chance (30%) - Chase menuju player untuk attack
+            LogDebug("Flee Exhaustion -> Chase (attack intent)", "red");
+            ChangeState(AIState.Chase);
+        }
+        else if (roll < exhaustionAttackChance + exhaustionBlindSpotChance)
+        {
+            // BlindSpot chance (40%) - Circle strafe
+            LogDebug("Flee Exhaustion -> BlindSpotSeek", "cyan");
+            ChangeState(AIState.BlindSpotSeek);
+        }
+        else
+        {
+            // Sisanya (30%) - Stop and stand ground (Pacing tanpa mundur)
+            LogDebug("Flee Exhaustion -> Pacing (stand ground)", "white");
+            ChangeState(AIState.Pacing);
         }
     }
 
@@ -548,13 +684,22 @@ public class GoblinSpearAI : BaseEnemyAI
             bool reachedCloseDistance = distanceToPlayer <= feintApproachDistance;
             bool timedOut = Time.time >= feintPhaseEndTime;
             
+            // DEBUG: Log every frame during Feint approach
+            // DEBUG: Log every frame during Feint approach
+            LogDebug($"FEINT APPROACH: dist={distanceToPlayer:F2} | target={feintApproachDistance:F2} | reached={reachedCloseDistance}", "magenta");
+            
             if (reachedCloseDistance)
             {
                 // Successfully got close! Now retreat (the fake-out)
+                // IMPORTANT: Stop momentum first so enemy doesn't overshoot into player!
+                movementController.StopMoving();
+                if (rb != null) rb.linearVelocity = Vector2.zero;
+                
                 isFeintApproaching = false;
                 feintPhaseEndTime = Time.time + feintRetreatDuration;
+                feintRetreatStartTime = Time.time; // Track when retreat started
                 movementController.SetRetreatMode(player, false);
-                LogDebug($"Feint: Got close (dist: {distanceToPlayer:F1})! Retreating!", "magenta");
+                LogDebug($"Feint: Got close (dist: {distanceToPlayer:F1})! STOP + Retreating for {feintRetreatDuration}s!", "magenta");
             }
             else if (timedOut)
             {
@@ -566,9 +711,18 @@ public class GoblinSpearAI : BaseEnemyAI
         else
         {
             // Phase 2: Retreating
-            // COMMIT ATTACK: Player mengejar saat retreat? Attack balik!
+            float timeSinceRetreatStart = Time.time - feintRetreatStartTime;
             float colliderDist = GetColliderDistance();
-            if (colliderDist <= commitAttackDistance && Time.time - lastAttackTime >= attackCooldown)
+            
+            // DEBUG: Log retreat phase
+            LogDebug($"FEINT RETREAT: time={timeSinceRetreatStart:F2}s | colliderDist={colliderDist:F2}", "magenta");
+            
+            // COMMIT ATTACK: Player mengejar saat retreat? Attack balik!
+            // BUT give grace period (0.3s) for enemy to actually start retreating
+            float retreatGracePeriod = 0.3f;
+            bool pastGracePeriod = timeSinceRetreatStart >= retreatGracePeriod;
+            
+            if (pastGracePeriod && colliderDist <= commitAttackDistance && Time.time - lastAttackTime >= attackCooldown)
             {
                 LogDebug($"Feint: Player caught up (dist: {colliderDist:F2})! Commit Attack!", "red");
                 ChangeState(AIState.Attack);
@@ -655,15 +809,69 @@ public class GoblinSpearAI : BaseEnemyAI
             hasRetreatEnough = true;
         }
         
+        // === FLEE EXHAUSTION CHECK ===
+        // Track continuous flee time saat dalam Retreat
+        if (!isInContinuousFlee)
+        {
+            isInContinuousFlee = true;
+            continuousFleeStartTime = Time.time;
+        }
+        
+        float fleeTime = Time.time - continuousFleeStartTime;
+        if (fleeTime >= maxContinuousFleeTime)
+        {
+            LogDebug($"FLEE EXHAUSTION! Enemy tired of running (fled for {fleeTime:F1}s)", "yellow");
+            ResetFleeExhaustion();
+            DecideAfterFleeExhaustion();
+            return;
+        }
+        
+        // === OPSI 2: Chase Back Trigger (dengan cooldown untuk balance) ===
+        // Jika player terlalu dekat saat retreat DAN cooldown sudah selesai, counter-attack!
+        float colliderDist = GetColliderDistance();
+        bool chaseBackReady = Time.time - lastChaseBackTime >= chaseBackCooldown;
+        
+        if (colliderDist <= chaseBackTriggerDistance && chaseBackReady && Time.time - lastAttackTime >= attackCooldown)
+        {
+            LogDebug($"CHASE BACK! Player too close during retreat (dist: {colliderDist:F2})", "red");
+            corneredTimer = 0f; // Reset cornered timer
+            lastChaseBackTime = Time.time; // Set cooldown
+            ChangeState(AIState.Chase);
+            return;
+        }
+        
+        // === OPSI 4: Cornered Detection ===
+        // Jika velocity sangat rendah (stuck/kepepet), fight back!
+        if (rb != null)
+        {
+            float currentVelocity = rb.linearVelocity.magnitude;
+            if (currentVelocity < corneredVelocityThreshold)
+            {
+                corneredTimer += Time.deltaTime;
+                if (corneredTimer >= corneredTimeThreshold)
+                {
+                    LogDebug($"CORNERED! Can't retreat, fighting back! (vel: {currentVelocity:F2})", "red");
+                    corneredTimer = 0f;
+                    ChangeState(AIState.Chase);
+                    return;
+                }
+            }
+            else
+            {
+                corneredTimer = 0f; // Reset jika masih bisa bergerak
+            }
+        }
+        
         // Retreat selesai?
         if (Time.time >= retreatEndTime && hasRetreatEnough)
         {
             LogDebug($"Retreat complete! -> Pacing (Breathing room)", "green");
+            corneredTimer = 0f;
             ChangeState(AIState.Pacing); // KEY: Masuk Pacing setelah Retreat!
             return;
         }
         
-        // Stuck handling
+        // Stuck handling (fallback jika cornered detection tidak trigger)
         if (Time.time >= retreatEndTime && !hasRetreatEnough)
         {
             if (timeSinceRetreatStart < maxRetreatExtendTime)
@@ -672,8 +880,9 @@ public class GoblinSpearAI : BaseEnemyAI
             }
             else
             {
-                LogDebug("Retreat stuck - going to Pacing anyway", "orange");
-                ChangeState(AIState.Pacing);
+                LogDebug("Retreat stuck - fighting back!", "orange");
+                corneredTimer = 0f;
+                ChangeState(AIState.Chase); // Changed: Fight back instead of Pacing
                 return;
             }
         }
@@ -682,6 +891,7 @@ public class GoblinSpearAI : BaseEnemyAI
         if (distanceToPlayer > optimalDistance * 2f)
         {
             LogDebug("Player too far during retreat -> Chase!", "cyan");
+            corneredTimer = 0f;
             ChangeState(AIState.Chase);
         }
     }
@@ -799,7 +1009,8 @@ public class GoblinSpearAI : BaseEnemyAI
                 isFeintApproaching = true;
                 feintStartPosition = transform.position;
                 feintPhaseEndTime = Time.time + feintMaxApproachTime; // Safety timeout
-                movementController.SetChaseMode(player); // Approach fast
+                // Use special Feint approach that stops at target distance!
+                movementController.SetFeintApproachMode(player, feintApproachDistance);
                 break;
         }
     }
@@ -885,18 +1096,42 @@ public class GoblinSpearAI : BaseEnemyAI
         // Direct check is more reliable for the primary target (Player).
         float dist = GetColliderDistance();
         
+        // DEBUG: Log detailed attack info
+        Debug.Log($"<color=yellow>[{gameObject.name}] ATTACK CHECK:</color> " +
+            $"dist={dist:F2} | attackRange={attackRange:F2} | threshold={attackRange + 0.2f:F2} | " +
+            $"myCollider={myBodyCollider?.gameObject.name ?? "NULL"} | " +
+            $"playerCollider={playerBodyCollider?.gameObject.name ?? "NULL"}");
+        
         // Allow slight leeway (0.2f) for movement during windup
         if (dist <= attackRange + 0.2f)
         {
             if (player != null)
             {
+                // FIX: Search for PlayerHealth in parent hierarchy
+                // because player tag might be on child Hurtbox, not parent
                 var playerHealth = player.GetComponent<PlayerHealth>();
+                if (playerHealth == null)
+                {
+                    playerHealth = player.GetComponentInParent<PlayerHealth>();
+                }
+                
+                Debug.Log($"<color=cyan>[{gameObject.name}] IN RANGE! PlayerHealth component: {(playerHealth != null ? "FOUND" : "NULL")}</color>");
+                
                 if (playerHealth != null)
                 {
+                    Debug.Log($"<color=red>[{gameObject.name}] DEALING {attackDamage} DAMAGE!</color>");
                     playerHealth.TakeDamage(attackDamage);
                     LogDebug($"Hit player for {attackDamage} damage! (Dist: {dist:F2})");
                 }
+                else
+                {
+                    Debug.LogError($"[{gameObject.name}] PlayerHealth NOT FOUND on {player.name} or its parents!");
+                }
             }
+        }
+        else
+        {
+            Debug.Log($"<color=gray>[{gameObject.name}] OUT OF RANGE: {dist:F2} > {attackRange + 0.2f:F2}</color>");
         }
     }
     

@@ -8,8 +8,24 @@ using UnityEngine.Events;
 public class PlayerHealth : MonoBehaviour
 {
     [Header("Health Settings")]
-    [SerializeField] private int maxHealth = 100;
+    [SerializeField] private int baseMaxHealth = 100; // Original max health
+    [SerializeField] private int maxHealth = 100;    // Current max health (base + bonus)
     [SerializeField] private int currentHealth;
+
+    public void SetMaxHealthBonus(int bonusAmount)
+    {
+        int oldMax = maxHealth;
+        maxHealth = baseMaxHealth + bonusAmount;
+        
+        // If max health increased, should we heal the difference? 
+        // Typically yes, or proportionally. Let's just update bounds for now.
+        if (currentHealth > maxHealth) currentHealth = maxHealth;
+        
+        // Optional: Heal difference if equip item provides instant health? 
+        // For now, let's keep current HP as is unless it exceeds max.
+        
+        OnHealthChanged?.Invoke(currentHealth);
+    }
     
     [Header("Out-of-Combat Regeneration")]
     [SerializeField] private bool enableOutOfCombatRegen = true;

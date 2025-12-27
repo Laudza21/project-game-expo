@@ -118,6 +118,21 @@ public class EnemyMovementController : MonoBehaviour
         
         separationBehaviour.IsEnabled = true;
     }
+    
+    /// <summary>
+    /// Special approach mode for Feint - slows down and stops at the specified distance
+    /// instead of running all the way to the target like Chase mode.
+    /// </summary>
+    public void SetFeintApproachMode(Transform target, float stopDistance)
+    {
+        DisableAllMovement();
+        seekBehaviour.IsEnabled = true;
+        seekBehaviour.Target = target;
+        seekBehaviour.UseArrival = true;     // Enable arrival so it slows down
+        seekBehaviour.ArrivalRadius = stopDistance; // Stop at this distance
+        
+        separationBehaviour.IsEnabled = true;
+    }
 
     public void SetCircleStrafeMode(Transform target, float? customRadius = null)
     {
@@ -125,20 +140,24 @@ public class EnemyMovementController : MonoBehaviour
         circleStrafeBehaviour.IsEnabled = true;
         circleStrafeBehaviour.Target = target;
         
-        // Use custom radius if provided, otherwise use default
-        if (customRadius.HasValue)
-            circleStrafeBehaviour.StrafeRadius = customRadius.Value;
-        else
-            circleStrafeBehaviour.StrafeRadius = optimalStrafeDistance;
+        // Determine base radius
+        float baseRadius = customRadius ?? optimalStrafeDistance;
         
-        // Use CombatManager strafe direction for consistent per-goblin variation
+        // Use CombatManager for unique radius per enemy (different orbits = no collision)
         if (CombatManager.Instance != null)
         {
+            // Get slot-based radius (each enemy on different orbit)
+            float uniqueRadius = CombatManager.Instance.GetEnemyStrafeRadius(gameObject, baseRadius);
+            circleStrafeBehaviour.StrafeRadius = uniqueRadius;
+            
+            // Get slot-based direction (locked, no random flip)
             float strafeDir = CombatManager.Instance.GetEnemyStrafeDirection(gameObject);
             circleStrafeBehaviour.SetDirection(strafeDir > 0); // true = clockwise
         }
         else
         {
+            // Fallback jika tidak ada CombatManager
+            circleStrafeBehaviour.StrafeRadius = baseRadius;
             circleStrafeBehaviour.RandomizeDirection();
         }
             
