@@ -159,6 +159,14 @@ public class PlayerHealth : MonoBehaviour
     void Die()
     {
         // Debug.Log("Player died!");
+        
+        // Trigger die animation
+        PlayerAnimationController animController = GetComponent<PlayerAnimationController>();
+        if (animController != null)
+        {
+            animController.PlayDieAnimation();
+        }
+        
         OnDeath?.Invoke();
     }
     

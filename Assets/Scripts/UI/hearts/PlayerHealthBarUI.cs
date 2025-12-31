@@ -37,6 +37,7 @@ public class PlayerHealthBarUI : MonoBehaviour
         
         // Subscribe to health change event
         playerHealth.OnHealthChanged.AddListener(OnHealthChanged);
+        playerHealth.OnDeath.AddListener(OnPlayerDeath);
         
         // Get or add CanvasGroup for fade
         canvasGroup = GetComponent<CanvasGroup>();
@@ -52,7 +53,10 @@ public class PlayerHealthBarUI : MonoBehaviour
     void OnDestroy()
     {
         if (playerHealth != null)
+        {
             playerHealth.OnHealthChanged.RemoveListener(OnHealthChanged);
+            playerHealth.OnDeath.RemoveListener(OnPlayerDeath);
+        }
     }
     
     void Update()
@@ -118,5 +122,38 @@ public class PlayerHealthBarUI : MonoBehaviour
     {
         if (playerHealth != null)
             UpdateHealthBar(playerHealth.GetCurrentHealth());
+    }
+    
+    /// <summary>
+    /// Called when player dies - fade out the health bar
+    /// </summary>
+    void OnPlayerDeath()
+    {
+        // Fade out health bar ketika player mati
+        if (canvasGroup != null)
+        {
+            StartCoroutine(FadeOutHealthBar());
+        }
+        
+        Debug.Log("<color=red>[PlayerHealthBarUI] Player died - fading out health bar</color>");
+    }
+    
+    /// <summary>
+    /// Smooth fade out animation untuk health bar
+    /// </summary>
+    System.Collections.IEnumerator FadeOutHealthBar()
+    {
+        float fadeDuration = 1f;
+        float elapsed = 0f;
+        float startAlpha = canvasGroup.alpha;
+        
+        while (elapsed < fadeDuration)
+        {
+            elapsed += Time.deltaTime;
+            canvasGroup.alpha = Mathf.Lerp(startAlpha, 0f, elapsed / fadeDuration);
+            yield return null;
+        }
+        
+        canvasGroup.alpha = 0f;
     }
 }

@@ -225,6 +225,7 @@ public class PlayerAnimationController : MonoBehaviour
     private static readonly int Pickaxe = Animator.StringToHash("Pickaxe");
     private static readonly int Bow = Animator.StringToHash("Bow");
     private static readonly int Sword = Animator.StringToHash("Sword");
+    private static readonly int Die = Animator.StringToHash("Die");
 
     void Awake()
     {
@@ -752,5 +753,23 @@ public class PlayerAnimationController : MonoBehaviour
                 return found;
         }
         return null;
+    }
+    
+    /// <summary>
+    /// Trigger die animation - called from PlayerHealth when player dies
+    /// </summary>
+    public void PlayDieAnimation()
+    {
+        // Stop all movement
+        moveInput = Vector2.zero;
+        rb.linearVelocity = Vector2.zero;
+        
+        // Trigger die animation
+        animator.SetTrigger(Die);
+        
+        // Disable further movement (optional - can be controlled by PlayerHealth disabling this script)
+        enabled = false;
+        
+        Debug.Log("<color=red>💀 [PlayerAnimationController] Die animation triggered!</color>");
     }
 }
