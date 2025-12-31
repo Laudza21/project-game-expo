@@ -790,8 +790,8 @@ PlayerSettings:
   editorAssembliesCompatibilityLevel: 1
   m_RenderingPath: 1
   m_MobileRenderingPath: 1
-  metroPackageName: tes 2d game rpg
-  metroPackageVersion: 
+  metroPackageName: tes2dgamerpg
+  metroPackageVersion: 1.0.0.0
   metroCertificatePath: 
   metroCertificatePassword: 
   metroCertificateSubject: 
@@ -799,7 +799,7 @@ PlayerSettings:
   metroCertificateNotAfter: 0000000000000000
   metroApplicationDescription: tes 2d game rpg
   wsaImages: {}
-  metroTileShortName: 
+  metroTileShortName: tes 2d game rpg
   metroTileShowName: 0
   metroMediumTileShowName: 0
   metroLargeTileShowName: 0

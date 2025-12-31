@@ -25,7 +25,12 @@ public class ArrowProjectile : MonoBehaviour
 
     private Rigidbody2D rb;
     private Vector2 moveDirection;
-    private bool isLaunched = false;
+    // private bool isLaunched = false; // REMOVED: Unused
+    
+    // Self-hit protection
+    private float spawnTime;
+    private const float SELF_HIT_PROTECTION_TIME = 0.2f; // 200ms protection after spawn
+    private GameObject shooter; // Reference to who shot this arrow
 
     private void Awake()
     {
@@ -40,7 +45,9 @@ public class ArrowProjectile : MonoBehaviour
     public void Launch(Vector2 direction)
     {
         moveDirection = direction.normalized;
-        isLaunched = true;
+        // isLaunched = true; // REMOVED: Unused
+        
+        spawnTime = Time.time; // Record spawn time for self-hit protection
 
         if (rb != null)
         {
@@ -92,34 +99,77 @@ public class ArrowProjectile : MonoBehaviour
 
     private void OnTriggerEnter2D(Collider2D other)
     {
-        // Ignore trigger colliders (like detection zones) to prevent premature explosion
-        if (other.isTrigger) return;
+        // DEBUG: Trace what we hit
+        Debug.Log($"Arrow hit: {other.name} | Tag: {other.tag} | IsTrigger: {other.isTrigger}");
         
+        // TIME-BASED SELF-HIT PROTECTION: Ignore ALL collisions for short time after spawn
+        // This prevents arrow from hitting shooter immediately after spawn
+        if (Time.time - spawnTime < SELF_HIT_PROTECTION_TIME)
+        {
+            Debug.Log($"[ArrowProtection] Ignoring collision - too soon after spawn ({Time.time - spawnTime:F3}s)");
+            return;
+        }
+
         // Ignore the owner (whoever fired this arrow)
         if (other.CompareTag(ownerTag)) return;
 
         bool hitSomething = false;
 
         // Try to damage Enemy (if arrow is from Player)
+        // Check GetComponent on the object ITSELF first, then parent if needed
         EnemyHealth enemyHealth = other.GetComponent<EnemyHealth>();
+        // If the collider is a child trigger (Hurtbox), the health script might be on the parent
+        if (enemyHealth == null) enemyHealth = other.GetComponentInParent<EnemyHealth>();
+
+        // Try to damage Player (if arrow is from Enemy)
+        PlayerHealth playerHealth = other.GetComponent<PlayerHealth>();
+        if (playerHealth == null) playerHealth = other.GetComponentInParent<PlayerHealth>();
+        
+        Debug.Log($"Health Detect: Enemy={enemyHealth!=null}, Player={playerHealth!=null}");
+
+        // GLOBAL SELF-HIT CHECK:
+        // Ensure we don't hit ourselves, even if the collider tag is different (e.g. Untagged Hurtbox on Enemy parent)
+        bool isSelf = (enemyHealth != null && enemyHealth.CompareTag(ownerTag)) || 
+                      (playerHealth != null && playerHealth.CompareTag(ownerTag));
+
+        if (isSelf) 
+        {
+            // Debug.Log($"Ignored Self-Hit: {other.name} (Owner: {ownerTag})");
+            return;
+        }
+
+        // INTELLIGENT TRIGGER IGNORING:
+        // Only ignore triggers IF they are NOT damageable targets (like detection zones)
+        if (other.isTrigger)
+        {
+            // If we found NO health component, then it's just a random trigger zone -> Ignore it
+            if (enemyHealth == null && playerHealth == null) 
+            {
+                Debug.Log("Ignored Trigger (No Health or Self)");
+                return;
+            }
+        }
         if (enemyHealth != null)
         {
+            Debug.Log("Damaging Enemy!");
             enemyHealth.TakeDamage(damage);
             enemyHealth.ApplyKnockback(moveDirection, knockbackForce);
             hitSomething = true;
         }
 
-        // Try to damage Player (if arrow is from Enemy)
-        PlayerHealth playerHealth = other.GetComponent<PlayerHealth>();
         if (playerHealth != null)
         {
+            Debug.Log("Damaging Player!");
             playerHealth.TakeDamage(damage);
             hitSomething = true;
         }
 
         // Only explode if we hit something damageable or a solid obstacle
-        if (hitSomething || !other.CompareTag("Untagged"))
+        // Reformulated: If we hit a valid target (hitSomething) OR if we hit a solid wall (not trigger, not untagged)
+        // Actually, just checking hitSomething is enough for enemies. 
+        if (hitSomething || (!other.isTrigger && !other.CompareTag("Untagged")))
         {
+            Debug.Log("Destroying Arrow!");
             // Spawn hit effect
             if (hitEffectPrefab != null)
             {
@@ -137,5 +187,13 @@ public class ArrowProjectile : MonoBehaviour
     public void SetOwner(string tag)
     {
         ownerTag = tag;
+    }
+    
+    /// <summary>
+    /// Set the GameObject that fired this arrow for additional collision filtering.
+    /// </summary>
+    public void SetShooter(GameObject shooterObject)
+    {
+        shooter = shooterObject;
     }
 }

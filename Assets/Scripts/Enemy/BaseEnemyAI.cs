@@ -12,7 +12,8 @@ public abstract class BaseEnemyAI : MonoBehaviour
 {
     [Header("References")]
     [SerializeField] protected Transform player;
-    [SerializeField] protected LayerMask obstacleLayer;
+    [SerializeField] protected LayerMask obstacleLayer; // For pathfinding/movement
+    [SerializeField] protected LayerMask visionBlockingLayer; // For LOS checks (only solid walls)
     [SerializeField] protected FormationManager formationManager;
     
     [Header("Patrol Zone")]
@@ -24,6 +25,8 @@ public abstract class BaseEnemyAI : MonoBehaviour
     
     [Header("Detection Settings")]
     public float detectionRange = 10f;
+    [Tooltip("Field of View Angle (Total angle). 90 means 45 left and 45 right.")]
+    public float viewAngle = 90f; // Vision Cone
     public float attackRange = 0.1f;
     public float loseTargetRange = 15f;
 
@@ -66,6 +69,16 @@ public abstract class BaseEnemyAI : MonoBehaviour
     protected float nextWanderIdleTime;
     protected float idleEndTime;
     
+    // Chase Memory & Search Variables (Last Known Position System)
+    protected Vector3 lastKnownPlayerPosition;
+    protected float chaseMemoryEndTime;
+    protected float searchEndTime;
+    [Header("Chase Memory Settings")]
+    [Tooltip("How long enemy 'remembers' player after losing sight")]
+    [SerializeField] protected float chaseMemoryDuration = 10f;
+    [Tooltip("How long enemy searches at last known position")]
+    [SerializeField] protected float searchDuration = 3f;
+    
     // Area Patrol Variables
     public Vector3 currentZoneTarget;
     protected float zoneChangeTime;
@@ -83,6 +96,7 @@ public abstract class BaseEnemyAI : MonoBehaviour
         Retreat,
         Flee,
         Stun,
+        Search,         // NEW: Investigate last known player position
         
         // Advanced Combat States
         Pacing,         // Jeda setelah retreat (breathing room)
@@ -235,10 +249,14 @@ public abstract class BaseEnemyAI : MonoBehaviour
         bool isMoving = IsMovingState(currentState);
         bool isRunning = IsRunningState(currentState);
         
-        // During combat/aware states, always face the player
+        // FacingOverride is only used when STANDING STILL in an aware state.
+        // When MOVING, let UpdateFacing() handle direction from velocity.
         Vector2? facingOverride = null;
-        if (IsAwareState(currentState) && player != null)
+        bool isActuallyMoving = rb != null && rb.linearVelocity.magnitude > 0.1f;
+        
+        if (IsAwareState(currentState) && player != null && !isActuallyMoving)
         {
+            // Standing still while aware of player -> Face player
             Vector2 directionToPlayer = ((Vector2)player.position - (Vector2)transform.position).normalized;
             facingOverride = directionToPlayer;
         }
@@ -250,7 +268,8 @@ public abstract class BaseEnemyAI : MonoBehaviour
     {
         return state == AIState.Patrol || state == AIState.Chase || state == AIState.Retreat || 
                state == AIState.Flee || state == AIState.Surround || 
-               state == AIState.BlindSpotSeek || state == AIState.Feint;
+               state == AIState.BlindSpotSeek || state == AIState.Feint ||
+               state == AIState.Search;
     }
     
     /// <summary>
@@ -271,32 +290,36 @@ public abstract class BaseEnemyAI : MonoBehaviour
         // SKIP facing update during Attack - direction is locked when attack starts
         if (currentState == AIState.Attack) return;
         
-        // During combat/aware states, always face the player
-        if (IsAwareState(currentState))
+        // Priority 1: Face Movement Direction (if moving)
+        if (rb != null && rb.linearVelocity.magnitude > 0.1f)
+        {
+            // Update Animator facing direction based on movement
+            if (enemyAnimator != null)
+            {
+                enemyAnimator.SetFacingDirection(rb.linearVelocity.normalized);
+            }
+
+            // Only flip sprite (Scale X) if there is significant horizontal movement
+            // If moving vertically (Up/Down), keep previous facing direction
+            if (rb.linearVelocity.x > 0.1f)
+                transform.localScale = new Vector3(1, 1, 1);
+            else if (rb.linearVelocity.x < -0.1f)
+                transform.localScale = new Vector3(-1, 1, 1);
+        }
+        // Priority 2: Face Player (if standing still AND aware of player)
+        else if (IsAwareState(currentState))
         {
             Vector2 directionToPlayer = ((Vector2)player.position - (Vector2)transform.position);
             
-            // Update sprite flip based on player position
             if (directionToPlayer.x > 0.1f)
                 transform.localScale = new Vector3(1, 1, 1);
             else if (directionToPlayer.x < -0.1f)
                 transform.localScale = new Vector3(-1, 1, 1);
             
-            // Update animator facing direction for correct directional animations
+            // Update animator facing
             if (enemyAnimator != null && directionToPlayer.magnitude > 0.1f)
             {
                 enemyAnimator.SetFacingDirection(directionToPlayer.normalized);
-            }
-        }
-        else
-        {
-            // During patrol/non-combat, face based on velocity
-            if (rb != null)
-            {
-                if (rb.linearVelocity.x > 0.1f)
-                    transform.localScale = new Vector3(1, 1, 1);
-                else if (rb.linearVelocity.x < -0.1f)
-                    transform.localScale = new Vector3(-1, 1, 1);
             }
         }
     }
@@ -364,7 +387,8 @@ public abstract class BaseEnemyAI : MonoBehaviour
 
     protected virtual void HandlePatrolState(float distanceToPlayer)
     {
-        if (distanceToPlayer <= detectionRange)
+        // Detection requires BOTH distance AND Line of Sight (including Vision Cone)
+        if (distanceToPlayer <= detectionRange && HasLineOfSightToPlayer(true))
         {
             // Debug.Log($"<color=white>[{gameObject.name}] ?? Huh? What was that?</color>");
             hesitateEndTime = Time.time + reactionTime;
@@ -378,7 +402,8 @@ public abstract class BaseEnemyAI : MonoBehaviour
 
     protected virtual void HandlePatrolIdleState(float distanceToPlayer)
     {
-        if (distanceToPlayer <= detectionRange)
+        // Detection requires BOTH distance AND Line of Sight (including Vision Cone)
+        if (distanceToPlayer <= detectionRange && HasLineOfSightToPlayer(true))
         {
             // Debug.Log($"<color=white>[{gameObject.name}] ?? (Startled from Idle)</color>");
             hesitateEndTime = Time.time + reactionTime;
@@ -389,6 +414,53 @@ public abstract class BaseEnemyAI : MonoBehaviour
             ChangeState(AIState.Patrol);
         }
     }
+    
+    /// <summary>
+    /// Check if enemy has clear Line of Sight to player.
+    /// <param name="useVisionCone">If true, restricted by viewAngle (FOV). If false, 360 detection (Walls only).</param>
+    /// </summary>
+    protected bool HasLineOfSightToPlayer(bool useVisionCone = false)
+    {
+        if (player == null) return false;
+        
+        Vector2 dirToPlayer = ((Vector2)player.position - (Vector2)transform.position).normalized;
+        
+        // 1. VISION CONE CHECK (Optional)
+        if (useVisionCone && enemyAnimator != null)
+        {
+            Vector2 facingDir = enemyAnimator.FacingDirection;
+            // Calculate angle between facing direction and player direction
+            float angleToPlayer = Vector2.Angle(facingDir, dirToPlayer);
+            
+            // If angle is outside half-viewAngle, player is in Blind Spot!
+            if (angleToPlayer > viewAngle / 2f)
+            {
+                return false;
+            }
+        }
+        
+        // 2. WALL OBSTACLE CHECK
+        float distToPlayer = Vector2.Distance(transform.position, player.position);
+        
+        // Use visionBlockingLayer if set, otherwise fallback to just "Wall" layer
+        LayerMask losLayer = visionBlockingLayer.value != 0 ? visionBlockingLayer : LayerMask.GetMask("Wall");
+        
+        RaycastHit2D hit = Physics2D.Raycast(transform.position, dirToPlayer, distToPlayer, losLayer);
+        
+        // DEBUG: Uncomment to visually see the sight line
+        if (hit.collider != null)
+        {
+             // Debug.DrawLine(transform.position, hit.point, Color.red, 0.1f);
+             // Debug.Log($"[{gameObject.name}] LOS Blocked by: {hit.collider.name} (Layer: {LayerMask.LayerToName(hit.collider.gameObject.layer)})");
+        }
+        else
+        {
+             // Debug.DrawLine(transform.position, player.position, Color.green, 0.1f);
+        }
+
+        // If no obstacle hit, or the hit is the player itself, we have LOS
+        return hit.collider == null || hit.collider.transform == player;
+    }
 
     // Abstract methods to force implementation in child classes
     protected abstract void HandleChaseState(float distanceToPlayer);
@@ -398,9 +470,26 @@ public abstract class BaseEnemyAI : MonoBehaviour
 
     public void ChangeState(AIState newState)
     {
+        // === CEK STATE QUOTA ===
+        // Jika state penuh, pilih alternatif
+        if (CombatManager.Instance != null && !CombatManager.Instance.CanEnterState(gameObject, newState))
+        {
+            AIState alternativeState = CombatManager.Instance.GetAlternativeState(newState);
+            // Debug.Log($\"[{gameObject.name}] State {newState} full! Using {alternativeState}\");
+            newState = alternativeState;
+        }
+        
+        // Unregister dari state lama
+        if (CombatManager.Instance != null)
+            CombatManager.Instance.UnregisterStateOccupant(gameObject, currentState);
+        
         ExitState(currentState);
         currentState = newState;
         EnterState(newState);
+        
+        // Register ke state baru
+        if (CombatManager.Instance != null)
+            CombatManager.Instance.RegisterStateOccupant(gameObject, newState);
     }
 
     protected virtual void EnterState(AIState state)
@@ -435,6 +524,22 @@ public abstract class BaseEnemyAI : MonoBehaviour
 
             case AIState.Chase:
                 movementController.SetChaseMode(player);
+                break;
+                
+            case AIState.Pacing:
+                // CRITICAL: Langsung mundur dari player saat masuk Pacing!
+                // Ini mencegah enemy Pacing di depan muka player
+                movementController.SetRetreatMode(player, false);
+                break;
+            
+            case AIState.Retreat:
+                // Langsung mundur saat masuk Retreat
+                movementController.SetRetreatMode(player, false);
+                break;
+                
+            case AIState.BlindSpotSeek:
+                // Circle strafe untuk cari celah
+                movementController.SetCircleStrafeMode(player);
                 break;
                 
             case AIState.Flee:
@@ -484,14 +589,21 @@ public abstract class BaseEnemyAI : MonoBehaviour
         if (CombatManager.Instance != null)
             CombatManager.Instance.UnregisterAwareEnemy(gameObject);
     }
+    
+    // Release direction count saat keluar dari retreat states
+    if (state == AIState.Retreat || state == AIState.Feint)
+    {
+        if (CombatManager.Instance != null)
+            CombatManager.Instance.ReleaseDirectionCount(gameObject);
+    }
 }
 
     protected void UpdateAreaPatrol()
     {
-        if (movementController != null && patrolTargetTransform != null)
+        if (movementController != null)
         {
-            patrolTargetTransform.position = currentZoneTarget;
-            movementController.SetSeekTarget(patrolTargetTransform);
+            // Use pathfinding for patrol
+            movementController.SetPatrolDestination(currentZoneTarget);
         }
 
         float distanceToTarget = Vector2.Distance(transform.position, currentZoneTarget);

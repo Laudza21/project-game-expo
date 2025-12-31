@@ -131,4 +131,9 @@ public class EnemyAnimator : MonoBehaviour
     
     // Optional: Public access if needed for special cases
     public Animator Animator => animator;
+
+    /// <summary>
+    /// Gets the current facing direction of the enemy (normalized)
+    /// </summary>
+    public Vector2 FacingDirection => new Vector2(lastHorizontal, lastVertical).normalized;
 }

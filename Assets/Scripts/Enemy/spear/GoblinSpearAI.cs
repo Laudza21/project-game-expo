@@ -29,16 +29,16 @@ public class GoblinSpearAI : BaseEnemyAI
 
     
     [Header("Pacing Settings (Breathing Room)")]
-    [SerializeField] private float pacingDurationMin = 1.0f;
-    [SerializeField] private float pacingDurationMax = 2.0f;
+    [SerializeField] private float pacingDurationMin = 1.5f;  // WAS 1.0f - Lebih lama
+    [SerializeField] private float pacingDurationMax = 3.0f;  // WAS 2.0f - Lebih lama
     [Tooltip("Jarak minimum dari player saat pacing (mundur jika lebih dekat)")]
     [SerializeField] private float pacingMinDistance = 3.0f;
     [Tooltip("Chance untuk kembali ke BlindSpotSeek setelah Pacing")]
-    [SerializeField] private float pacingToBlindSpotChance = 0.3f;
+    [SerializeField] private float pacingToBlindSpotChance = 0.5f; // WAS 0.3f - Lebih sering tactical
     
     [Header("Vulnerable Window (Player Opportunity)")]
     [Tooltip("Durasi vulnerable window saat awal Pacing - enemy tidak react")]
-    [SerializeField] private float vulnerableWindowDuration = 0.8f;
+    [SerializeField] private float vulnerableWindowDuration = 1.5f; // WAS 0.8f - Window lebih panjang
     [Tooltip("Jarak untuk commit attack saat player mendekat di tactical mode (should be <= attackRange)")]
     [SerializeField] private float commitAttackDistance = 0.3f; // Same as attackRange to prevent early attacks
     
@@ -62,7 +62,7 @@ public class GoblinSpearAI : BaseEnemyAI
     
     [Header("Retreat Settings")]
     [SerializeField] private float retreatDuration = 0.5f;
-    [SerializeField] private float retreatChance = 0.45f; // 45% retreat
+    [SerializeField] private float retreatChance = 0.7f; // WAS 0.45f - 70% retreat setelah attack
     [SerializeField] private bool useCircleStrafe = true;
     [SerializeField] private bool useFormation = false;
     public float retreatMinDistance = 2.5f;
@@ -162,6 +162,13 @@ public class GoblinSpearAI : BaseEnemyAI
     // Aggression System Variables  
     private int consecutiveTacticalMoves;
     private float currentAggressionChance;
+    
+    // PERSONALITY SYSTEM (INDIVIDUAL THOUGHT)
+    // Makes each goblin behave differently
+    private float personalityAggressionMod; // +/- aggression (-0.2 to 0.2)
+    private float personalityReactionSpeed; // -0.1 to 0.1 (slower/faster decisions)
+    private float decisionTimer; // Timer for Next Decision
+    private float nextDecisionTime; // When to decide next
 
     #if UNITY_EDITOR
     [Header("Debug")]
@@ -179,6 +186,16 @@ public class GoblinSpearAI : BaseEnemyAI
         // Initialize Aggression System
         consecutiveTacticalMoves = 0;
         currentAggressionChance = baseAggressionChance;
+        
+        // INITIALIZE PERSONALITY
+        // Setiap goblin punya "sifat" beda
+        personalityAggressionMod = Random.Range(-0.15f, 0.15f); // Ada yang pengecut, ada yang berani
+        personalityReactionSpeed = Random.Range(0.1f, 0.4f); // Beda kecepatan mikir (0.1s - 0.4s delay)
+        decisionTimer = 0f;
+        nextDecisionTime = 0f;
+        
+        // Randomize Strafe Radius (Lanes) to prevent stacking
+        blindSpotStrafeRadius *= Random.Range(0.9f, 1.25f);
         
         // DEBUG: Goblin Identity Info
         LogDebug($"========== GOBLIN INIT ==========", "white");
@@ -233,12 +250,60 @@ public class GoblinSpearAI : BaseEnemyAI
         // Regenerate stamina while being aggressive
         RegenerateStamina(Time.deltaTime);
         
+        // === CHASE MEMORY SYSTEM ===
+        // Check if we can SEE the player right now
+        bool canSeePlayer = HasLineOfSightToPlayer(false); // 360 awareness during chase
+        
+        if (canSeePlayer)
+        {
+            // Player visible! Update last known position and reset memory timer
+            lastKnownPlayerPosition = player.position;
+            chaseMemoryEndTime = Time.time + chaseMemoryDuration;
+        }
+        
+        // Too far? Check memory before giving up
         if (distanceToPlayer > loseTargetRange)
         {
-            isRushingToAttack = false; // Reset flag
-            isFirstEngagement = true; // Reset first engagement so it rushes again next time
-            ChangeState(AIState.Patrol);
+            isRushingToAttack = false;
+            isFirstEngagement = true;
+            
+            // Go to Search state instead of Patrol - investigate last known position!
+            LogDebug("Player escaped! Going to search last known position...", "yellow");
+            ChangeState(AIState.Search);
             return;
+        }
+        
+        // Lost line of sight but within range? Use memory timer and CHASE to last known position!
+        if (!canSeePlayer)
+        {
+            if (Time.time > chaseMemoryEndTime)
+            {
+                // Memory expired! Lost the player.
+                isRushingToAttack = false;
+                isFirstEngagement = true;
+                LogDebug("Lost sight of player! Memory expired. Searching...", "yellow");
+                ChangeState(AIState.Search);
+                return;
+            }
+            else
+            {
+                // Memory still active! Keep chasing toward LAST KNOWN position!
+                // This makes enemy follow player into rooms instead of giving up at door
+                float distToLastKnown = Vector2.Distance(transform.position, lastKnownPlayerPosition);
+                if (distToLastKnown > 1.0f)
+                {
+                    // Stay in Chase mode! Pathfind to LAST KNOWN position (not player!)
+                    movementController.SetChaseDestination(lastKnownPlayerPosition);
+                    LogDebug($"Chasing last known position... (memory: {chaseMemoryEndTime - Time.time:F1}s)", "cyan");
+                }
+                else
+                {
+                    // Reached last known position but no player - keep looking!
+                    // Extend memory slightly to give more search time at the spot
+                    chaseMemoryEndTime = Time.time + 10f; // Extra 10 seconds at the spot
+                    LogDebug("Reached last known position, looking around...", "cyan");
+                }
+            }
         }
         
         if (useFormation && formationManager != null)
@@ -271,7 +336,19 @@ public class GoblinSpearAI : BaseEnemyAI
             }
             else
             {
-                // Tidak dapat token - masuk tactical mode sambil tunggu giliran
+                // Tidak dapat token
+                
+                // JIKA sedang Rushing (sudah nemu blind spot), JANGAN kembali ke tactical/seek!
+                // Tetap agresif (Chase/Pace) sampai dapat token.
+                if (isRushingToAttack)
+                {
+                    LogDebug("In range (Rushing) but no token - Waiting aggressively", "orange");
+                    // Stay in Chase/Surround behavior (don't switch state)
+                    movementController.StopMoving(); // Wait in place ready to strike
+                    return;
+                }
+                
+                // Normal tactical fallback
                 LogDebug("In range but no attack token - going tactical", "yellow");
                 DecideTacticalApproach();
                 return;
@@ -285,14 +362,51 @@ public class GoblinSpearAI : BaseEnemyAI
             return;
         }
         
+        // --- NEW: Aggressive Blind Spot Check ---
+        // Jika kebetulan kita sudah ada di belakang player (meskipun belum sengaja cari),
+        // LANGSUNG manfaatkan momen ini! Jangan buang waktu mikir taktik.
+        if (IsInPlayerBlindSpot())
+        {
+            isRushingToAttack = true; // Mark as aggressive rush
+            LogDebug("OPPORTUNITY: Found blind spot by luck! RUSHING!", "red");
+            movementController.SetChaseMode(player);
+            return;
+        }
+        
         // Sampai di engagement range? Pilih taktik!
+        // ASYNC DECISION MAKING: Jangan putuskan tiap frame!
+        // TAPI: Harus pastikan kita punya Line of Sight (LOS) sebelum taktik!
+        // Jangan mulai BlindSpotSeek kalau masih di balik tembok.
         if (distanceToPlayer <= engagementRange && distanceToPlayer > attackRange)
         {
-            DecideTacticalApproach();
+            if (Time.time >= nextDecisionTime)
+            {
+                // Check LOS first
+                Vector2 dirToPlayer = ((Vector2)player.position - (Vector2)transform.position).normalized;
+                RaycastHit2D hit = Physics2D.Raycast(transform.position, dirToPlayer, distanceToPlayer, obstacleLayer);
+                
+                bool hasLOS = (hit.collider == null || hit.collider.transform == player);
+                
+                if (hasLOS)
+                {
+                    // Safe to go tactical (we see the player)
+                    DecideTacticalApproach();
+                    // Set next decision time based on personality
+                    nextDecisionTime = Time.time + 0.5f + personalityReactionSpeed;
+                }
+                else
+                {
+                    // No LOS (behind wall)? Continue CHASING via pathfinding!
+                    // Don't switch to tactical yet.
+                    MoveTowardsCombatSlot();
+                    return;
+                }
+            }
             return;
         }
         
         // Masih jauh? Kejar ke arah combat slot
+        // MoveTowardsCombatSlot sudah handle pathfinding tiap frame, aman.
         MoveTowardsCombatSlot();
     }
     
@@ -321,17 +435,35 @@ public class GoblinSpearAI : BaseEnemyAI
         }
 
         // TACTICAL MODE: Circle Strafe / Feint
-        if (Random.value < 0.7f) // 70% BlindSpot, 30% Feint (original balance)
+        // CEK QUOTA DULU sebelum memilih
+        bool canBlindSpot = CombatManager.Instance == null || CombatManager.Instance.CanEnterState(gameObject, AIState.BlindSpotSeek);
+        bool canFeint = CombatManager.Instance == null || CombatManager.Instance.CanEnterState(gameObject, AIState.Feint);
+        
+        if (!canBlindSpot && !canFeint)
+        {
+            // Kedua tactical state penuh! Tetap di Chase mode
+            LogDebug("Tactical: Both BlindSpotSeek & Feint FULL! Staying in Chase.", "yellow");
+            movementController.SetChaseMode(player);
+            return;
+        }
+        
+        if (Random.value < 0.7f && canBlindSpot) // 70% BlindSpot jika available
         {
             // Circle strafe cari blind spot
             ChangeState(AIState.BlindSpotSeek);
             LogDebug("Tactical: BlindSpotSeek!", "cyan");
         }
-        else
+        else if (canFeint)
         {
             // Feint (tipuan)
             ChangeState(AIState.Feint);
             LogDebug("Tactical: Feint!", "magenta");
+        }
+        else if (canBlindSpot)
+        {
+            // Fallback to BlindSpotSeek
+            ChangeState(AIState.BlindSpotSeek);
+            LogDebug("Tactical: BlindSpotSeek (Feint full)!", "cyan");
         }
     }
 
@@ -365,6 +497,10 @@ public class GoblinSpearAI : BaseEnemyAI
             case AIState.Feint:
                 HandleFeintState(distanceToPlayer);
                 break;
+                
+            case AIState.Search:
+                HandleSearchState(distanceToPlayer);
+                break;
         }
     }
 
@@ -391,32 +527,38 @@ public class GoblinSpearAI : BaseEnemyAI
         // Check vulnerable window status
         if (Time.time < vulnerableWindowEndTime)
         {
-            // VULNERABLE WINDOW ACTIVE - Enemy berdiri diam, TIDAK react!
-            // Ini kesempatan emas untuk player menyerang!
-            // isVulnerable = true;
-            movementController.StopMoving();
-            if (rb != null) rb.linearVelocity = Vector2.zero;
+            // VULNERABLE WINDOW ACTIVE
+            // TAPI harus mundur dulu kalau terlalu dekat!
+            if (distanceToPlayer < pacingMinDistance)
+            {
+                // Terlalu dekat! Mundur dulu sebelum vulnerable
+                movementController.SetRetreatMode(player, false);
+            }
+            else
+            {
+                // Sudah cukup jauh - baru boleh diam (vulnerable)
+                movementController.StopMoving();
+                if (rb != null) rb.linearVelocity = Vector2.zero;
+            }
             
             // Pacing selesai? (tetap check)
             if (Time.time >= pacingEndTime)
             {
-                // isVulnerable = false;
                 corneredTimer = 0f;
                 DecideAfterPacing();
             }
             
-            // Update facing direction towards player saat idle (AFTER stop moving)
+            // Update facing direction towards player
             if (enemyAnimator != null && player != null)
             {
                 Vector2 directionToPlayer = (Vector2)player.position - (Vector2)transform.position;
-                // Only update if direction is significant (prevent normalize() issues)
                 if (directionToPlayer.sqrMagnitude > 0.01f)
                 {
                     enemyAnimator.SetFacingDirection(directionToPlayer.normalized);
                 }
             }
             
-            return; // TIDAK react sama sekali selama vulnerable!
+            return;
         }
         
         // Vulnerable window selesai
@@ -596,7 +738,15 @@ public class GoblinSpearAI : BaseEnemyAI
         // Check jika sudah di blind spot!
         if (IsInPlayerBlindSpot())
         {
-            // foundBlindSpot = true;
+            // CEK DULU: Ada teman di blind spot?
+            if (IsBlindSpotOccupied())
+            {
+                // Blind spot sudah ditempati! Cari celah lain.
+                LogDebug("Blind spot occupied by ally! Reversing strafe...", "yellow");
+                movementController.ReverseStrafeDirection();
+                return;
+            }
+            
             isRushingToAttack = true; // Skip tactical, go straight to attack!
             LogDebug("FOUND BLIND SPOT! Rushing in!", "green");
             ChangeState(AIState.Chase);
@@ -637,8 +787,27 @@ public class GoblinSpearAI : BaseEnemyAI
                 // Coba lagi dengan arah berbeda
                 currentStrafeEndTime = Time.time + strafeAttemptDuration;
                 movementController.SetCircleStrafeMode(player);
-                LogDebug($"Strafe attempt {currentStrafeAttempt + 1}/{maxCircleStrafeAttempts}", "cyan");
+                movementController.ReverseStrafeDirection(); // Force direction swap!
+                LogDebug($"Strafe attempt {currentStrafeAttempt + 1}/{maxCircleStrafeAttempts} (Switching Direction)", "cyan");
             }
+        }
+        
+        // === CROWD AWARENESS (Anti-Stacking) ===
+        // Jika velocity sangat rendah (stuck/blocked by friend) saat mencari celah
+        // Ganti arah putar!
+        if (rb != null && rb.linearVelocity.magnitude < 0.5f)
+        {
+            corneredTimer += Time.deltaTime; // Reuse timer
+            if (corneredTimer > 1.0f) // Stuck for 1s
+            {
+                corneredTimer = 0f;
+                movementController.ReverseStrafeDirection();
+                LogDebug("Blocked by crowd/wall -> Reversing Strafe Direction!", "orange");
+            }
+        }
+        else
+        {
+            corneredTimer = 0f;
         }
     }
     
@@ -663,6 +832,31 @@ public class GoblinSpearAI : BaseEnemyAI
         float dot = Vector2.Dot(playerFacing, toGoblin);
         
         return dot < blindSpotThreshold;
+    }
+    
+    /// <summary>
+    /// Cek apakah ada teman di posisi blind spot player
+    /// </summary>
+    private bool IsBlindSpotOccupied()
+    {
+        if (playerAnimController == null || player == null)
+            return false;
+        
+        // Posisi blind spot = belakang player
+        Vector2 playerFacing = playerAnimController.GetFacingDirection();
+        Vector2 blindSpotPos = (Vector2)player.position - playerFacing * 2f;
+        
+        // Cek apakah ada teman dalam radius 1.5m dari blind spot
+        Collider2D[] allies = Physics2D.OverlapCircleAll(blindSpotPos, 1.5f, LayerMask.GetMask("Enemy"));
+        foreach (var ally in allies)
+        {
+            // Skip diri sendiri
+            if (ally.transform.root.gameObject == gameObject) continue;
+            
+            // Ada teman di sana!
+            return true;
+        }
+        return false;
     }
 
     // ==========================================
@@ -743,14 +937,29 @@ public class GoblinSpearAI : BaseEnemyAI
     // ==========================================
     private void HandleAttackState()
     {
-        // FORCE STOP: Pastikan tidak bergerak sama sekali saat attack/recovery
-        if (rb != null) rb.linearVelocity = Vector2.zero;
+        // STRICT FORCE STOP: Ensure NO movement during attack!
+        if (movementController != null) movementController.StopMoving();
+        if (rb != null) 
+        {
+            rb.linearVelocity = Vector2.zero;
+            rb.angularVelocity = 0f;
+        }
         
         if (isAttacking)
         {
             if (Time.time >= attackStateEndTime)
             {
-                PerformAttack();
+                // Verify range BEFORE performing the hit
+                // Only damage if STILL in range (punish player if they stayed, miss if they dodged)
+                float currentDist = GetColliderDistance();
+                if (currentDist <= attackRange + 0.5f) // Slight leeway for windup movement
+                {
+                    PerformAttack();
+                }
+                else
+                {
+                    LogDebug($"Attack Missed! Player moved out of range (Dist: {currentDist:F2})", "yellow");
+                }
 
                 // Finish attack sequence
                 isAttacking = false;
@@ -911,6 +1120,41 @@ public class GoblinSpearAI : BaseEnemyAI
     }
 
     // ==========================================
+    // SEARCH STATE - Investigate last known player position
+    // ==========================================
+    private void HandleSearchState(float distanceToPlayer)
+    {
+        // If player comes back in range and visible, resume chase!
+        if (distanceToPlayer <= detectionRange && HasLineOfSightToPlayer(false))
+        {
+            LogDebug("Search: Found player again! Resuming chase!", "yellow");
+            ChangeState(AIState.Hesitate);
+            return;
+        }
+        
+        // Move to last known position
+        float distToLastKnown = Vector2.Distance(transform.position, lastKnownPlayerPosition);
+        
+        if (distToLastKnown > 1.0f)
+        {
+            // Still moving to position
+            movementController.SetPatrolDestination(lastKnownPlayerPosition);
+        }
+        else
+        {
+            // Reached position - look around
+            movementController.StopMoving();
+            
+            // Timeout check
+            if (Time.time >= searchEndTime)
+            {
+                LogDebug("Search complete. Returning to patrol.", "cyan");
+                ChangeState(AIState.Patrol);
+            }
+        }
+    }
+
+    // ==========================================
     // ENTER STATE HANDLERS
     // ==========================================
     protected override void EnterState(AIState state)
@@ -925,7 +1169,12 @@ public class GoblinSpearAI : BaseEnemyAI
 
             case AIState.Attack:
                 LogDebug("Status: Attack!", "red");
-                movementController.StopMoving();
+                if (movementController != null)
+                {
+                    // Gunakan SetAttackMode untuk mematikan separation agar tidak didorong teman
+                    movementController.SetAttackMode();
+                }
+                    
                 if (rb != null) rb.linearVelocity = Vector2.zero;
                 
                 // Reset aggression system on attack
@@ -1012,6 +1261,12 @@ public class GoblinSpearAI : BaseEnemyAI
                 // Use special Feint approach that stops at target distance!
                 movementController.SetFeintApproachMode(player, feintApproachDistance);
                 break;
+                
+            case AIState.Search:
+                LogDebug($"Status: Search (investigating last known position)", "yellow");
+                // Set the timer for how long to search before giving up
+                searchEndTime = Time.time + searchDuration;
+                break;
         }
     }
 
@@ -1021,7 +1276,7 @@ public class GoblinSpearAI : BaseEnemyAI
     
     /// <summary>
     /// Bergerak menuju combat slot yang diassign dari CombatManager.
-    /// Jika belum ada slot atau sudah dekat player, chase normal.
+    /// Enemy mendekat dari arah slot mereka untuk spread positioning.
     /// </summary>
     private void MoveTowardsCombatSlot()
     {
@@ -1031,31 +1286,8 @@ public class GoblinSpearAI : BaseEnemyAI
             return;
         }
         
-        Vector2? slotPos = CombatManager.Instance.GetEnemySlotPosition(gameObject);
-        
-        if (slotPos.HasValue)
-        {
-            // Buat temporary target untuk seek ke slot position
-            // Tapi tetap chase player jika sudah dekat dengan slot
-            float distToSlot = Vector2.Distance(transform.position, slotPos.Value);
-            float distToPlayer = GetDistanceToPlayer();
-            
-            if (distToSlot < 1.5f || distToPlayer <= engagementRange)
-            {
-                // Sudah dekat slot atau player, chase normal
-                movementController.SetChaseMode(player);
-            }
-            else
-            {
-                // Masih jauh dari slot, bergerak ke arah slot (tapi juga ke player)
-                // Blend antara slot position dan player position
-                movementController.SetChaseMode(player);
-            }
-        }
-        else
-        {
-            movementController.SetChaseMode(player);
-        }
+        // Gunakan slot-based approach untuk mendekati dari sudut unik
+        movementController.SetSlotApproachMode(player, engagementRange);
     }
     
     /// <summary>
@@ -1217,10 +1449,14 @@ public class GoblinSpearAI : BaseEnemyAI
     /// </summary>
     private bool ShouldBeAggressive()
     {
+        // Apply MULTIPLICATIVE or ADDITIVE modifier from Personality
+        float finalChance = currentAggressionChance + personalityAggressionMod;
+        finalChance = Mathf.Clamp01(finalChance);
+
         float roll = Random.value;
-        bool isAggressive = roll < currentAggressionChance;
+        bool isAggressive = roll < finalChance;
         
-        LogDebug($"[AGGRESSION] Roll: {roll:F2} vs Chance: {currentAggressionChance:F2} -> {(isAggressive ? "AGGRESSIVE!" : "Tactical")}", 
+        LogDebug($"[AGGRESSION] Roll: {roll:F2} vs Chance: {finalChance:F2} ({currentAggressionChance:F2} + {personalityAggressionMod:F2}) -> {(isAggressive ? "AGGRESSIVE!" : "Tactical")}", 
             isAggressive ? "red" : "cyan");
             
         return isAggressive;
@@ -1252,6 +1488,130 @@ public class GoblinSpearAI : BaseEnemyAI
     }
 
     #if UNITY_EDITOR
+    // Gizmos SELALU tampil (tidak harus selected)
+    private void OnDrawGizmos()
+    {
+        if (!Application.isPlaying) return;
+        if (player == null) return;
+        
+        // === STATE LABEL ===
+        Vector3 labelPos = transform.position + Vector3.up * 1.5f;
+        string stateText = $"{gameObject.name}\n{currentState}";
+        
+        // Warna berdasarkan state
+        Color stateColor = GetStateColor(currentState);
+        Gizmos.color = stateColor;
+        
+        // Draw label (menggunakan Handles di editor)
+        UnityEditor.Handles.color = stateColor;
+        UnityEditor.Handles.Label(labelPos, stateText, new GUIStyle() 
+        { 
+            fontSize = 12, 
+            fontStyle = FontStyle.Bold,
+            normal = new GUIStyleState() { textColor = stateColor }
+        });
+        
+        // === LINE KE TARGET ===
+        Vector3 targetPos = transform.position;
+        
+        switch (currentState)
+        {
+            case AIState.Chase:
+                // Show slot approach point or player depending on distance
+                if (CombatManager.Instance != null)
+                {
+                    float distToPlayer = Vector2.Distance(transform.position, player.position);
+                    Vector2? slotPos = CombatManager.Instance.GetEnemySlotPosition(gameObject);
+                    if (slotPos.HasValue && distToPlayer > engagementRange)
+                    {
+                        // Jauh = target slot approach point
+                        Vector2 slotDir = (slotPos.Value - (Vector2)player.position).normalized;
+                        targetPos = (Vector2)player.position + slotDir * engagementRange;
+                    }
+                    else
+                    {
+                        // Dekat = langsung ke player
+                        targetPos = player.position;
+                    }
+                }
+                else
+                {
+                    targetPos = player.position;
+                }
+                break;
+            case AIState.Attack:
+                targetPos = player.position;
+                break;
+            case AIState.BlindSpotSeek:
+                // Target = belakang player
+                if (playerAnimController != null)
+                {
+                    Vector2 facing = playerAnimController.GetFacingDirection();
+                    targetPos = (Vector2)player.position - facing * 2f;
+                }
+                break;
+            case AIState.Feint:
+                // Target = posisi dekat player (feint approach distance)
+                Vector2 dirToPlayer = ((Vector2)player.position - (Vector2)transform.position).normalized;
+                targetPos = (Vector2)player.position - dirToPlayer * feintApproachDistance;
+                break;
+            case AIState.Retreat:
+            case AIState.Pacing:
+                // Target = mundur dari player
+                Vector2 awayDir = ((Vector2)transform.position - (Vector2)player.position).normalized;
+                targetPos = (Vector2)transform.position + awayDir * 2f;
+                break;
+        }
+        
+        // Draw line ke target
+        Gizmos.color = stateColor;
+        Gizmos.DrawLine(transform.position, targetPos);
+        
+        // Draw sphere di target
+        Gizmos.DrawWireSphere(targetPos, 0.3f);
+        
+        // === SLOT INDICATOR ===
+        if (CombatManager.Instance != null)
+        {
+            int slot = CombatManager.Instance.GetEnemySlot(gameObject);
+            if (slot >= 0)
+            {
+                Vector3 slotPos = CombatManager.Instance.GetSlotWorldPosition(slot);
+                Gizmos.color = new Color(stateColor.r, stateColor.g, stateColor.b, 0.5f);
+                Gizmos.DrawWireCube(slotPos, Vector3.one * 0.5f);
+                Gizmos.DrawLine(transform.position, slotPos);
+            }
+        }
+    }
+    
+    private Color GetStateColor(AIState state)
+    {
+        switch (state)
+        {
+            case AIState.Patrol:
+            case AIState.PatrolIdle:
+                return Color.gray;
+            case AIState.Hesitate:
+                return Color.yellow;
+            case AIState.Chase:
+                return Color.red;
+            case AIState.Attack:
+                return new Color(1f, 0f, 0.5f); // Magenta
+            case AIState.BlindSpotSeek:
+                return Color.cyan;
+            case AIState.Feint:
+                return new Color(1f, 0.5f, 1f); // Pink
+            case AIState.Retreat:
+                return Color.blue;
+            case AIState.Pacing:
+                return Color.green;
+            case AIState.Stun:
+                return Color.white;
+            default:
+                return Color.white;
+        }
+    }
+
     private void OnDrawGizmosSelected()
     {
         // Spear attack range (orange)

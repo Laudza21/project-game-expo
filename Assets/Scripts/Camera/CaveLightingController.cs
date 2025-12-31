@@ -24,8 +24,8 @@ public class CaveLightingController : MonoBehaviour
     [Range(0f, 2f)]
     public float darkIntensity = 0.15f;
     
-    [Tooltip("Durasi transisi dari terang ke gelap (detik)")]
-    public float transitionDuration = 3f;
+    [Tooltip("Durasi transisi dari terang ke gelap (detik) - match dengan cutscene walk")]
+    public float transitionDuration = 5f;
 
     [Header("=== Trigger Mode ===")]
     [Tooltip("Mode transisi lighting")]

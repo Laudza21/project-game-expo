@@ -445,6 +445,28 @@ public class PlayerAnimationController : MonoBehaviour
     {
         return lastDirection;
     }
+    
+    /// <summary>
+    /// Force set facing direction (untuk cutscene atau external control)
+    /// Bypass direction lock timer
+    /// </summary>
+    public void SetFacingDirection(Vector2 direction)
+    {
+        lastDirection = direction.normalized;
+        directionLockTimer = 0f; // Reset lock timer
+        
+        // Update animator parameters
+        animator.SetFloat(Horizontal, lastDirection.x);
+        animator.SetFloat(Vertical, lastDirection.y);
+        
+        // Handle sprite flip
+        if (lastDirection.x > 0)
+            transform.localScale = new Vector3(1, 1, 1);
+        else if (lastDirection.x < 0)
+            transform.localScale = new Vector3(-1, 1, 1);
+            
+        Debug.Log($"<color=cyan>[SetFacingDirection] Direction forced to: {lastDirection}</color>");
+    }
 
     /// <summary>
     /// Force update lastDirection ke arah movement saat ini
@@ -636,6 +658,7 @@ public class PlayerAnimationController : MonoBehaviour
         ArrowProjectile projectile = arrow.GetComponent<ArrowProjectile>();
         if (projectile != null)
         {
+            projectile.SetOwner("Player"); // Arrow ignores player, damages enemies
             projectile.Launch(spawnDir);
         }
     }

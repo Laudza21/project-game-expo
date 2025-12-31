@@ -14,12 +14,12 @@ TagManager:
   - UI
   - Enemy
   - collect
-  - Obstacle
+  - Wall
   - DepthSort
-  - 
-  - 
-  - 
-  - 
+  - Interact
+  - Background
+  - Batu
+  - WalkableZone
   - 
   - 
   - 

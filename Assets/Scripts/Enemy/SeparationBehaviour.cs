@@ -8,10 +8,10 @@ using System.Collections.Generic;
 public class SeparationBehaviour : SteeringBehaviour
 {
     [Header("Separation Settings")]
-    [SerializeField] private float separationRadius = 2f;
+    [SerializeField] private float separationRadius = 4f; // WAS 3f - LEBIH JAUH LAGI!
     public float SeparationRadius { get => separationRadius; set => separationRadius = value; }
 
-    [SerializeField] private float maxForce = 8f;
+    [SerializeField] private float maxForce = 100f; // WAS 50f - DOUBLE FORCE!
     public float MaxForce { get => maxForce; set => maxForce = value; }
 
     [SerializeField] private LayerMask separationLayer;
@@ -26,7 +26,7 @@ public class SeparationBehaviour : SteeringBehaviour
     public float PredictionTime { get => predictionTime; set => predictionTime = value; }
     
     [Tooltip("Jarak minimum yang harus dijaga (hard boundary)")]
-    [SerializeField] private float hardMinDistance = 0.8f;
+    [SerializeField] private float hardMinDistance = 1.5f; // WAS 1.2f - LEBIH JAUH!
     public float HardMinDistance { get => hardMinDistance; set => hardMinDistance = value; }
     
     [Tooltip("Multiplier untuk force saat sangat dekat (emergency avoidance)")]
@@ -39,11 +39,20 @@ public class SeparationBehaviour : SteeringBehaviour
     [Header("Debug")]
     [SerializeField] private bool enableDebugLogs = false;
     
+    // STATIC MODE: Enemy ini tidak gerak untuk avoid, tapi yang lain avoid dari dia
+    private bool isStaticMode = false;
+    public void SetStaticMode(bool isStatic) => isStaticMode = isStatic;
+    public bool IsStaticMode => isStaticMode;
+    
     private void Awake()
     {
         // Generate consistent slide bias based on InstanceID
         // Ini memastikan setiap goblin punya preferensi kiri/kanan yang berbeda
-        slideBias = (gameObject.GetInstanceID() % 2 == 0) ? 1f : -1f;
+        // Generate random slide bias per goblin (-1 to 1, avoiding near-0)
+        // Ini memastikan setiap goblin punya preferensi unik dan tidak kaku
+        do {
+            slideBias = Random.Range(-1.0f, 1.0f);
+        } while (Mathf.Abs(slideBias) < 0.3f); // Hindari nilai terlalu kecil (tidak punya opini arah)
         
         if (enableDebugLogs)
         {
@@ -51,14 +60,46 @@ public class SeparationBehaviour : SteeringBehaviour
         }
     }
 
+    // Optional target to explicitly avoid (e.g., Player during flanking)
+    public Transform ExtraRepulsionTarget { get; set; }
+
     public override Vector2 Calculate(Rigidbody2D agent)
     {
         if (!isEnabled || agent == null)
+            return Vector2.zero;
+        
+        // STATIC MODE: Saya tidak menghindar, tapi orang lain akan menghidari saya
+        if (isStaticMode)
             return Vector2.zero;
 
         Vector2 steering = Vector2.zero;
         int neighborCount = 0;
 
+        // === EXTRA REPULSION TARGET (PLAYER) ===
+        // Avoid specific target (like Player) when flanking
+        if (ExtraRepulsionTarget != null)
+        {
+            Vector2 diff = agent.position - (Vector2)ExtraRepulsionTarget.position;
+            float dist = diff.magnitude;
+            
+            // Hard avoidance radius for player (1.5m)
+            float playerAvoidRadius = 1.5f; 
+            
+            if (dist < playerAvoidRadius)
+            {
+                // Strong push away from player
+                float strength = (1f - (dist / playerAvoidRadius)) * maxForce * 2f;
+                // resultForce += diff.normalized * strength; // Removed undefined variable
+                
+                // Treat as a neighbor for averaging
+                steering += diff.normalized * strength;
+                neighborCount++;
+                
+                // Debug
+                 if (enableDebugLogs) Debug.DrawRay(agent.position, diff.normalized * strength, Color.magenta);
+            }
+        }
+        
         // Find nearby agents dengan radius lebih besar untuk deteksi awal
         float detectionRadius = separationRadius * 1.5f;
         Collider2D[] neighbors = Physics2D.OverlapCircleAll(
@@ -110,6 +151,24 @@ public class SeparationBehaviour : SteeringBehaviour
             float effectiveDistance = Mathf.Min(currentDistance, predictedDistance);
             Vector2 effectiveDiff = (currentDistance <= predictedDistance) ? diff : predictedDiff;
 
+            // === STATIONARY NEIGHBOR BOOST ===
+            // Jika neighbor diam (sedang attack/idle), anggap sebagai obstacle berat!
+            // neighborRb sudah didefinisikan di atas
+            bool isNeighborStationary = neighborRb != null && neighborRb.linearVelocity.magnitude < 0.5f;
+            
+            // Cek apakah neighbor dalam static mode (Attack/Pacing)
+            var neighborSeparation = neighborRoot.GetComponent<SeparationBehaviour>();
+            bool isNeighborStatic = neighborSeparation != null && neighborSeparation.IsStaticMode;
+            
+            float effectiveRadius = separationRadius;
+            
+            if (isNeighborStationary || isNeighborStatic)
+            {
+                // Perbesar effective radius untuk neighbor yang diam
+                // Supaya kita menghindar lebih awal
+                effectiveRadius *= 1.25f; 
+            }
+
             // === CALCULATE AVOIDANCE STRENGTH ===
             float strength;
             bool isEmergency = effectiveDistance < hardMinDistance;
@@ -118,13 +177,14 @@ public class SeparationBehaviour : SteeringBehaviour
             {
                 // EMERGENCY: Sangat dekat! Force maksimal!
                 strength = emergencyForceMultiplier;
+                if (isNeighborStationary) strength *= 1.5f; // Extra push from static wall
             }
-            else if (effectiveDistance < separationRadius)
+            else if (effectiveDistance < effectiveRadius)
             {
                 // NORMAL: Dalam radius separation
                 if (useFalloff)
                 {
-                    strength = Mathf.Clamp01(1f - (effectiveDistance / separationRadius));
+                    strength = Mathf.Clamp01(1f - (effectiveDistance / effectiveRadius));
                     // Boost strength untuk jarak menengah
                     strength = Mathf.Pow(strength, 0.7f); // Kurva lebih agresif
                 }
@@ -132,11 +192,31 @@ public class SeparationBehaviour : SteeringBehaviour
                 {
                     strength = 1f / effectiveDistance;
                 }
+                
+                // Boost force against stationary targets
+                if (isNeighborStationary) strength *= 1.5f;
             }
             else
             {
                 // PREDICTIVE: Di luar radius tapi predicted collision
                 strength = Mathf.Clamp01(1f - (effectiveDistance / detectionRadius)) * 0.5f;
+            }
+            
+            // === PHYSICAL PUSH (FAILSAFE) ===
+            // Jika sangat dekat (menempel), tingkatkan steering force DRASTIS
+            // TIDAK LANGSUNG manipulasi velocity - itu menyebabkan tembus wall!
+            if (currentDistance < 0.6f) 
+            {
+                // Hitung arah dorong - tingkatkan strength secara DRASTIS
+                Vector2 pushDir = diff.normalized;
+                if (pushDir == Vector2.zero) pushDir = Random.insideUnitCircle.normalized;
+                
+                // Tambahkan ke steering force dengan multiplier besar
+                // SteeringManager akan apply ini dengan proper collision handling
+                steering += pushDir * emergencyForceMultiplier * 5f;
+                
+                // Debug visual
+                if (enableDebugLogs) Debug.DrawRay(agent.position, pushDir, Color.red, 0.1f);
             }
             
             // DEBUG: Log emergency situations
@@ -145,6 +225,29 @@ public class SeparationBehaviour : SteeringBehaviour
                 Debug.Log($"<color=red>[{gameObject.name}] EMERGENCY! Dist to {neighbor.name}: {effectiveDistance:F2} < {hardMinDistance} | Force: {strength:F2}</color>");
             }
 
+            // === PRIORITY-BASED AVOIDANCE ===
+            // Jika 2 enemy bergerak mau tabrakan, hanya yang prioritas rendah yang menghindar
+            // Priority berdasarkan InstanceID - lebih kecil = prioritas lebih tinggi
+            bool neighborIsMoving = neighborRb != null && neighborRb.linearVelocity.magnitude > 0.5f;
+            bool iAmMoving = agent.linearVelocity.magnitude > 0.5f;
+            
+            // Jika neighbor diam/static → saya SELALU menghindar
+            // Jika keduanya bergerak → yang InstanceID lebih besar yang menghindar
+            bool shouldIAvoid = true;
+            if (iAmMoving && neighborIsMoving && !isNeighborStationary && !isNeighborStatic)
+            {
+                // Keduanya bergerak - cek priority
+                int myID = gameObject.GetInstanceID();
+                int neighborID = neighborRoot.gameObject.GetInstanceID();
+                shouldIAvoid = myID > neighborID; // ID lebih besar = prioritas rendah = menghindar
+            }
+            
+            if (!shouldIAvoid)
+            {
+                // Saya prioritas tinggi, skip neighbor ini
+                continue;
+            }
+            
             // === APPLY REPULSION FORCE ===
             steering += effectiveDiff.normalized * strength;
 
@@ -158,12 +261,14 @@ public class SeparationBehaviour : SteeringBehaviour
             
             // Jika velocity hampir parallel (retreat/chase sama arah), gunakan slideBias
             // Ini memastikan goblin yang bergerak searah akan menyebar ke arah berbeda
-            bool isParallelMovement = Mathf.Abs(dotProduct) < 0.3f; // Near perpendicular = parallel movement
+            bool isParallelMovement = Mathf.Abs(dotProduct) < 0.4f; // Increased threshold for broader detection
             
             if (isParallelMovement)
             {
-                // Gunakan bias konsisten per-goblin untuk spread out
-                tangent = tangent * slideBias;
+                // Gunakan bias acak per-goblin untuk spread out secara natural
+                // Jika bias positif, belok kanan. Negatif, belok kiri.
+                float biasDirection = Mathf.Sign(slideBias);
+                tangent = tangent * biasDirection;
             }
             else if (dotProduct < 0)
             {
@@ -171,7 +276,8 @@ public class SeparationBehaviour : SteeringBehaviour
             }
 
             // Add sliding force - lebih kuat saat parallel movement untuk spread
-            float slideMultiplier = isEmergency ? 2.5f : (isParallelMovement ? 2.0f : 1.5f);
+            // Multiplier ditingkatkan supaya mereka benar-benar melebar
+            float slideMultiplier = isEmergency ? 4.0f : (isParallelMovement ? 3.5f : 2.0f);
             steering += tangent * (strength * slideMultiplier);
 
             neighborCount++;
@@ -181,6 +287,14 @@ public class SeparationBehaviour : SteeringBehaviour
         if (neighborCount > 0)
         {
             steering /= neighborCount;
+            
+            // === CROWD EXPLOSION ===
+            // Jika dikepung banyak teman (3+), ledakkan keluar!
+            if (neighborCount >= 3)
+            {
+                steering *= 2.0f; // Double the force if crowd is dense
+            }
+            
             steering = Vector2.ClampMagnitude(steering, maxForce);
         }
 

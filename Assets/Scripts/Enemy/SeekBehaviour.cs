@@ -18,16 +18,41 @@ public class SeekBehaviour : SteeringBehaviour
     public Transform Target
     {
         get => target;
-        set => target = value;
+        set { target = value; explicitTargetPosition = null; }
+    }
+
+    public Vector2 TargetPosition
+    {
+        get => explicitTargetPosition ?? (target != null ? (Vector2)target.position : Vector2.zero);
+        set { explicitTargetPosition = value; target = null; }
+    }
+    
+    public bool HasTarget => target != null || explicitTargetPosition.HasValue;
+
+    private Vector2? explicitTargetPosition;
+
+    public void SetTarget(Transform t)
+    {
+        target = t;
+        explicitTargetPosition = null;
+    }
+
+    public void SetTargetPosition(Vector2 pos)
+    {
+        explicitTargetPosition = pos;
+        target = null;
     }
 
     public override Vector2 Calculate(Rigidbody2D agent)
     {
-        if (!isEnabled || target == null || agent == null)
+        if (!isEnabled || agent == null)
+            return Vector2.zero;
+            
+        if (target == null && !explicitTargetPosition.HasValue)
             return Vector2.zero;
 
         Vector2 currentPosition = agent.position;
-        Vector2 targetPosition = target.position;
+        Vector2 targetPosition = target != null ? (Vector2)target.position : explicitTargetPosition.Value;
         
         float distance = Vector2.Distance(currentPosition, targetPosition);
 

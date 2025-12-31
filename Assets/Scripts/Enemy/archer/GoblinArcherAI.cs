@@ -43,6 +43,31 @@ public class GoblinArcherAI : BaseEnemyAI
     private float continuousKiteStartTime = -999f; // Track kapan mulai kiting
     private bool isKiting = false;
 
+    protected override void Start()
+    {
+        base.Start();
+        StartCoroutine(RandomizedArcherStart());
+    }
+
+    private System.Collections.IEnumerator RandomizedArcherStart()
+    {
+        // 1. Random Start Delay (Desync)
+        yield return new WaitForSeconds(Random.Range(0f, 0.5f));
+        
+        // 2. Randomize Shooting Interval (Nerf & Variation)
+        shootingInterval = Random.Range(2.5f, 4.0f); // Longer cooldown (was 2.0f)
+        
+        // 3. Randomize Kiting Distance (Desync movement)
+        // Set unique kiting distance for each archer so they don't form a perfect wall
+        kitingDistance = Random.Range(3.5f, 5.5f); 
+        
+        // 4. Randomize Exhaustion
+        maxContinuousKiteTime = Random.Range(3.0f, 5.0f);
+        
+        // DEBUG
+        // if (enableDebugLogs) Debug.Log($"[{gameObject.name}] Archer Init: KiteDist={kitingDistance:F1} | ShootInterval={shootingInterval:F1}");
+    }
+
     protected override void HandleChaseState(float distanceToPlayer)
     {
         // 1. Cek jika target hilang
@@ -125,15 +150,31 @@ public class GoblinArcherAI : BaseEnemyAI
             corneredTimer = 0f;
             
             // Jarak ideal! Stop lari, mulai nembak.
-            movementController.StopMoving();
+            // Gunakan SetAttackMode agar tidak di-push oleh separation saat aiming
+            if (movementController != null) movementController.SetAttackMode();
+            else movementController.StopMoving();
             
             // Pastikan menghadap player
             FaceTarget(player.position);
 
             if (Time.time >= lastShootTime + shootingInterval)
             {
-                // Debug.Log($"[{gameObject.name}] In Range ({distanceToPlayer:F1}m). Shooting!");
-                ChangeState(AIState.Attack);
+                // NEW: Request Attack Token first!
+                bool hasToken = CombatManager.Instance != null 
+                    ? CombatManager.Instance.RequestAttackToken(gameObject) 
+                    : true;
+
+                if (hasToken)
+                {
+                    // Debug.Log($"[{gameObject.name}] In Range ({distanceToPlayer:F1}m). Shooting!");
+                    ChangeState(AIState.Attack);
+                }
+                else
+                {
+                    // No token? Wait/Pace or just aim
+                    // Keep facing target but don't shoot yet
+                    FaceTarget(player.position);
+                }
             }
         }
         else
@@ -143,7 +184,15 @@ public class GoblinArcherAI : BaseEnemyAI
             corneredTimer = 0f;
             
             // Player masih jauh, kejar mendekat
-            movementController.SetChaseMode(player);
+            // Gunakan slot-based approach untuk variation angle
+            if (movementController != null)
+            {
+                movementController.SetSlotApproachMode(player, shootingRange);
+            }
+            else
+            {
+                movementController.SetChaseMode(player);
+            }
         }
     }
 
@@ -152,6 +201,10 @@ public class GoblinArcherAI : BaseEnemyAI
         switch (state)
         {
             case AIState.Attack:
+                // STRICT STATIONARY CHECK
+                if (movementController != null) movementController.StopMoving();
+                if (rb != null) rb.linearVelocity = Vector2.zero;
+                
                 if (!isShooting)
                 {
                     StartCoroutine(ShootRoutine());

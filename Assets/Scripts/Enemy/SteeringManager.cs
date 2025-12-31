@@ -97,20 +97,21 @@ public class SteeringManager : MonoBehaviour
 
     private void ApplySteeringForce(Vector2 force)
     {
-        // Clamp acceleration
+        // Clamp to max acceleration
         Vector2 acceleration = Vector2.ClampMagnitude(force, maxAcceleration);
         
-        // Apply force
-        rb.AddForce(acceleration, ForceMode2D.Force);
-
-        // Clamp velocity to max speed
-        if (rb.linearVelocity.magnitude > maxSpeed)
-        {
-            rb.linearVelocity = rb.linearVelocity.normalized * maxSpeed;
-        }
-
+        // Calculate desired velocity (same approach as Player uses - respects collision!)
+        Vector2 desiredVelocity = rb.linearVelocity + acceleration * Time.fixedDeltaTime;
+        
+        // Clamp to max speed
+        desiredVelocity = Vector2.ClampMagnitude(desiredVelocity, maxSpeed);
+        
         // Apply drag
-        rb.linearVelocity *= (1f - drag * Time.fixedDeltaTime);
+        desiredVelocity *= (1f - drag * Time.fixedDeltaTime);
+        
+        // SET velocity directly (like Player) instead of AddForce
+        // This respects Unity's physics collision system and prevents wall penetration
+        rb.linearVelocity = desiredVelocity;
     }
 
     public void AddBehaviour(SteeringBehaviour behaviour)

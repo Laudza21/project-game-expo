@@ -13,15 +13,15 @@ public class CombatManager : MonoBehaviour
     
     [Header("Attack Token Settings")]
     [Tooltip("Maksimum enemy yang boleh attack bersamaan")]
-    [SerializeField] private int maxConcurrentAttackers = 2;
+    [SerializeField] private int maxConcurrentAttackers = 1; // WAS 3 - Hanya 1 attacker sekaligus!
     [Tooltip("Durasi minimum antara attack token release")]
-    [SerializeField] private float attackTokenCooldown = 0.5f;
+    [SerializeField] private float attackTokenCooldown = 1.5f; // WAS 0.5f - Jeda lebih lama
     
     [Header("Combat Slot Settings")]
     [Tooltip("Jarak slot dari player")]
-    [SerializeField] private float slotDistance = 2.5f;
-    [Tooltip("Jumlah slot di sekitar player (4 = cardinal, 8 = with diagonals)")]
-    [SerializeField] private int numberOfSlots = 8;
+    [SerializeField] private float slotDistance = 3.5f; // Increased from 2.5f for more space
+    [Tooltip("Jumlah slot di sekitar player (6 = optimal hex, 8 = crowded)")]
+    [SerializeField] private int numberOfSlots = 6; // Reduced from 8 to prevent overlap
     
     [Header("Debug")]
     [SerializeField] private bool showDebugGizmos = true;
@@ -36,6 +36,23 @@ public class CombatManager : MonoBehaviour
     // Combat Slot System
     private Dictionary<int, GameObject> slotAssignments = new Dictionary<int, GameObject>();
     private Dictionary<GameObject, int> enemySlots = new Dictionary<GameObject, int>();
+    
+    // === STATE QUOTA SYSTEM ===
+    // Membatasi jumlah enemy per state untuk variasi
+    private static readonly Dictionary<BaseEnemyAI.AIState, int> stateQuotas = new()
+    {
+        { BaseEnemyAI.AIState.Attack, 1 },      // Max 1 attack
+        { BaseEnemyAI.AIState.Pacing, 2 },      // Max 2 pacing
+        { BaseEnemyAI.AIState.BlindSpotSeek, 2 },
+        { BaseEnemyAI.AIState.Feint, 2 },
+        { BaseEnemyAI.AIState.Retreat, 2 },
+        { BaseEnemyAI.AIState.Chase, 2 },       // WAS 3 - Max 2 chase supaya tidak numpuk!
+    };
+    private Dictionary<BaseEnemyAI.AIState, HashSet<GameObject>> stateOccupants = new();
+    
+    // === DIRECTION QUOTA SYSTEM ===
+    // Max 3 enemy per direction (quantized to 45° steps)
+    private Dictionary<int, int> directionCounts = new();
     
     // Events
     public System.Action OnEnterCombat;
@@ -66,6 +83,75 @@ public class CombatManager : MonoBehaviour
         GameObject playerObj = GameObject.FindGameObjectWithTag("Player");
         if (playerObj != null)
             playerTransform = playerObj.transform;
+            
+        // Start optimization routine (reduced frequency to prevent jitter)
+        InvokeRepeating(nameof(OptimizeSlotAssignments), 2f, 1f);
+    }
+    
+    /// <summary>
+    /// Checks for inefficient slot assignments (crossing paths) and swaps them.
+    /// Makes enemies behave like "liquid" taking the nearest opening.
+    /// </summary>
+    private void OptimizeSlotAssignments()
+    {
+        if (slotAssignments.Count < 2) return;
+        
+        List<int> activeSlots = new List<int>(slotAssignments.Keys);
+        
+        // Also check for blocked slots and reassign
+        foreach (var kvp in new Dictionary<int, GameObject>(slotAssignments))
+        {
+            // Only release if the slot is physically invalid (inside wall)
+            // If it's just hidden by LOS, keep it (prevent flicker loop)
+            if (kvp.Value != null && !IsSlotReachable(kvp.Value, kvp.Key, false))
+            {
+                // Slot terhalang tembok/invalid position, force reassign
+                ReleaseCombatSlot(kvp.Value);
+                AssignCombatSlot(kvp.Value);
+            }
+        }
+        
+        // Check pairs for crossing paths
+        for (int i = 0; i < activeSlots.Count; i++)
+        {
+            for (int j = i + 1; j < activeSlots.Count; j++)
+            {
+                int slotA = activeSlots[i];
+                int slotB = activeSlots[j];
+                
+                if (!slotAssignments.ContainsKey(slotA) || !slotAssignments.ContainsKey(slotB))
+                    continue;
+                
+                GameObject enemyA = slotAssignments[slotA];
+                GameObject enemyB = slotAssignments[slotB];
+                
+                if (enemyA == null || enemyB == null) continue;
+                
+                // REACHABILITY CHECK: Jangan swap jika salah satu slot blocked
+                bool canAReachB = IsSlotReachable(enemyA, slotB);
+                bool canBReachA = IsSlotReachable(enemyB, slotA);
+                if (!canAReachB || !canBReachA) continue; // Skip swap
+                
+                Vector2 posA = enemyA.transform.position;
+                Vector2 posB = enemyB.transform.position;
+                
+                Vector2 targetA = GetSlotWorldPosition(slotA);
+                Vector2 targetB = GetSlotWorldPosition(slotB);
+                
+                // Current total distance
+                float currentDist = Vector2.Distance(posA, targetA) + Vector2.Distance(posB, targetB);
+                
+                // Swapped total distance
+                float swappedDist = Vector2.Distance(posA, targetB) + Vector2.Distance(posB, targetA);
+                
+                // If swapping saves significant distance (> 1m), DO IT!
+                if (swappedDist < currentDist - 1.0f)
+                {
+                    SwapSlots(enemyA, enemyB);
+                    if (showDebugGizmos) Debug.DrawLine(posA, posB, Color.white, 0.5f);
+                }
+            }
+        }
     }
     
     // ==========================================
@@ -114,11 +200,134 @@ public class CombatManager : MonoBehaviour
     }
     
     // ==========================================
+    // STATE QUOTA SYSTEM
+    // ==========================================
+    
+    /// <summary>
+    /// Cek apakah enemy boleh masuk state tertentu (quota available?)
+    /// </summary>
+    public bool CanEnterState(GameObject enemy, BaseEnemyAI.AIState state)
+    {
+        if (!stateQuotas.ContainsKey(state)) return true; // Unlimited
+        
+        if (!stateOccupants.ContainsKey(state))
+            stateOccupants[state] = new HashSet<GameObject>();
+        
+        // Sudah di state ini?
+        if (stateOccupants[state].Contains(enemy)) return true;
+        
+        // Quota penuh?
+        return stateOccupants[state].Count < stateQuotas[state];
+    }
+    
+    /// <summary>
+    /// Register enemy ke state tertentu
+    /// </summary>
+    public void RegisterStateOccupant(GameObject enemy, BaseEnemyAI.AIState state)
+    {
+        if (!stateOccupants.ContainsKey(state))
+            stateOccupants[state] = new HashSet<GameObject>();
+        stateOccupants[state].Add(enemy);
+    }
+    
+    /// <summary>
+    /// Unregister enemy dari state tertentu
+    /// </summary>
+    public void UnregisterStateOccupant(GameObject enemy, BaseEnemyAI.AIState state)
+    {
+        if (stateOccupants.ContainsKey(state))
+            stateOccupants[state].Remove(enemy);
+    }
+    
+    /// <summary>
+    /// Get state alternatif jika state yang diinginkan penuh
+    /// </summary>
+    public BaseEnemyAI.AIState GetAlternativeState(BaseEnemyAI.AIState blockedState)
+    {
+        switch (blockedState)
+        {
+            case BaseEnemyAI.AIState.Pacing: return BaseEnemyAI.AIState.BlindSpotSeek;
+            case BaseEnemyAI.AIState.BlindSpotSeek: return BaseEnemyAI.AIState.Feint;
+            case BaseEnemyAI.AIState.Feint: return BaseEnemyAI.AIState.Pacing; // WAS Chase - Now Pacing
+            case BaseEnemyAI.AIState.Retreat: return BaseEnemyAI.AIState.Pacing;
+            case BaseEnemyAI.AIState.Chase: return BaseEnemyAI.AIState.Pacing; // NEW: Chase penuh -> Pacing (tunggu)
+            default: return BaseEnemyAI.AIState.Pacing;
+        }
+    }
+    
+    // ==========================================
+    // DIRECTION VARIATION SYSTEM
+    // ==========================================
+    
+    // Track which direction each enemy is using
+    private Dictionary<GameObject, int> enemyDirections = new();
+    
+    /// <summary>
+    /// Get retreat/strafe direction dengan variation enforcement (max 3 per direction)
+    /// </summary>
+    public Vector2 GetVariedRetreatDirection(GameObject enemy)
+    {
+        // Remove old direction if enemy had one
+        if (enemyDirections.ContainsKey(enemy))
+        {
+            int oldKey = enemyDirections[enemy];
+            if (directionCounts.ContainsKey(oldKey))
+                directionCounts[oldKey] = Mathf.Max(0, directionCounts[oldKey] - 1);
+        }
+        
+        float baseAngle = GetEnemyDirectionalAngle(enemy);
+        int angleKey = Mathf.RoundToInt(baseAngle / 45f) * 45; // Quantize to 45° steps
+        
+        // Cek count
+        if (!directionCounts.ContainsKey(angleKey))
+            directionCounts[angleKey] = 0;
+        
+        // Cari direction yang available (max 2 per direction untuk lebih spread)
+        int attempts = 0;
+        while (directionCounts[angleKey] >= 2 && attempts < 8) // Max 2 per direction
+        {
+            angleKey = (angleKey + 45) % 360;
+            if (!directionCounts.ContainsKey(angleKey))
+                directionCounts[angleKey] = 0;
+            attempts++;
+        }
+        
+        directionCounts[angleKey]++;
+        enemyDirections[enemy] = angleKey;
+        
+        float rad = angleKey * Mathf.Deg2Rad;
+        return new Vector2(Mathf.Cos(rad), Mathf.Sin(rad)).normalized;
+    }
+    
+    /// <summary>
+    /// Call when enemy exits retreat state
+    /// </summary>
+    public void ReleaseDirectionCount(GameObject enemy)
+    {
+        if (enemyDirections.ContainsKey(enemy))
+        {
+            int key = enemyDirections[enemy];
+            if (directionCounts.ContainsKey(key))
+                directionCounts[key] = Mathf.Max(0, directionCounts[key] - 1);
+            enemyDirections.Remove(enemy);
+        }
+    }
+    
+    /// <summary>
+    /// Reset direction counts (call saat combat ends)
+    /// </summary>
+    public void ResetDirectionCounts()
+    {
+        directionCounts.Clear();
+        enemyDirections.Clear();
+    }
+    
+    // ==========================================
     // COMBAT SLOT SYSTEM
     // ==========================================
     
     /// <summary>
-    /// Assign slot terdekat yang kosong ke enemy.
+    /// Assign slot terdekat yang kosong DAN REACHABLE (tidak terhalang obstacle) ke enemy.
     /// Return slot index (-1 jika tidak ada slot).
     /// </summary>
     public int AssignCombatSlot(GameObject enemy)
@@ -127,17 +336,31 @@ public class CombatManager : MonoBehaviour
         
         // Sudah punya slot?
         if (enemySlots.TryGetValue(enemy, out int existingSlot))
-            return existingSlot;
+        {
+            // Cek apakah slot masih reachable, jika tidak, reassign
+            if (IsSlotReachable(enemy, existingSlot, true))
+                return existingSlot;
+            else
+            {
+                // Slot lama terhalang, lepas dan cari baru
+                ReleaseCombatSlot(enemy);
+            }
+        }
         
-        // Cari slot terdekat yang kosong
+        // Cari slot terdekat yang kosong DAN reachable
         Vector2 enemyPos = enemy.transform.position;
         int bestSlot = -1;
         float bestDistance = float.MaxValue;
         
+        // PASS 1: Find Perfect Slot (Valid + Reachable)
         for (int i = 0; i < numberOfSlots; i++)
         {
             if (!slotAssignments.ContainsKey(i))
             {
+                // CEK STRICT: Valid Pos + Reachable
+                if (!IsSlotReachable(enemy, i, true))
+                    continue; 
+                    
                 Vector2 slotPos = GetSlotWorldPosition(i);
                 float dist = Vector2.Distance(enemyPos, slotPos);
                 
@@ -149,6 +372,31 @@ public class CombatManager : MonoBehaviour
             }
         }
         
+        // PASS 2: Fallback to Valid-but-blocked Slot (Valid Pos, Ignored LOS)
+        // Only if no perfect slot found
+        if (bestSlot < 0)
+        {
+            for (int i = 0; i < numberOfSlots; i++)
+            {
+                if (!slotAssignments.ContainsKey(i))
+                {
+                    // CEK LOOSE: Valid Pos Only (Ignore LOS)
+                    // This prevents picking slots inside walls, but allows slots behind walls
+                    if (!IsSlotReachable(enemy, i, false))
+                        continue;
+                        
+                    Vector2 slotPos = GetSlotWorldPosition(i);
+                    float dist = Vector2.Distance(enemyPos, slotPos);
+                    
+                    if (dist < bestDistance)
+                    {
+                        bestDistance = dist;
+                        bestSlot = i;
+                    }
+                }
+            }
+        }
+        
         if (bestSlot >= 0)
         {
             slotAssignments[bestSlot] = enemy;
@@ -156,6 +404,70 @@ public class CombatManager : MonoBehaviour
         }
         
         return bestSlot;
+    }
+    
+    /// <summary>
+    /// Cek apakah slot dapat dicapai.
+    /// checkLOS = true : Cek Raycast (harus terlihat).
+    /// checkLOS = false : Cek Overlap Only (harus tidak didalam tembok).
+    /// </summary>
+    private bool IsSlotReachable(GameObject enemy, int slotIndex, bool checkLOS = true)
+    {
+        Vector2 slotPos = GetSlotWorldPosition(slotIndex);
+        Vector2 enemyPos = enemy.transform.position;
+        
+        // 0. CHECK IF SLOT IS WITHIN PATHFINDING GRID
+        // If the slot is outside the map, it's automatically invalid!
+        if (Pathfinding.PathfindingManager.Instance != null)
+        {
+            var grid = Pathfinding.PathfindingManager.Instance.GetGrid();
+            if (grid != null)
+            {
+                var node = grid.NodeFromWorldPoint(slotPos);
+                if (node == null || !node.walkable)
+                {
+                    return false; // Slot is outside grid or on unwalkable terrain
+                }
+            }
+        }
+        
+        // Define mask strictly
+        LayerMask obstacleMask = LayerMask.GetMask("Obstacle", "Interact", "Wall", "Environment", "Default");
+        
+        // 1. CHECK VALIDITY: Is the slot itself inside an obstacle?
+        // ALWAYS CHECK THIS. Never assign a slot inside a wall.
+        if (Physics2D.OverlapCircle(slotPos, 0.3f, obstacleMask))
+        {
+            return false;
+        }
+        
+        if (!checkLOS) return true; // Only care about position validity
+        
+        // 2. CHECK REACHABILITY: Raycast from enemy to slot
+        Vector2 direction = (slotPos - enemyPos);
+        float distance = direction.magnitude;
+        
+        if (distance < 0.1f) return true; // Sudah di slot
+        
+        bool oldQueryTriggers = Physics2D.queriesHitTriggers;
+        Physics2D.queriesHitTriggers = true;
+        
+        RaycastHit2D hit = Physics2D.Raycast(enemyPos, direction.normalized, distance, obstacleMask);
+        
+        Physics2D.queriesHitTriggers = oldQueryTriggers;
+        
+        // Debug
+        if (showDebugGizmos)
+        {
+            Debug.DrawLine(enemyPos, slotPos, hit.collider != null ? Color.red : Color.green, 0.1f);
+        }
+        
+        if (hit.collider == null)
+            return true;
+        if (hit.collider.CompareTag("Player"))
+            return true;
+            
+        return false; // Terhalang obstacle
     }
     
     /// <summary>
@@ -196,6 +508,16 @@ public class CombatManager : MonoBehaviour
             return GetSlotWorldPosition(slot);
         }
         return null;
+    }
+    
+    /// <summary>
+    /// Dapatkan nomor slot enemy (untuk debug gizmos)
+    /// </summary>
+    public int GetEnemySlot(GameObject enemy)
+    {
+        if (enemySlots.TryGetValue(enemy, out int slot))
+            return slot;
+        return -1;
     }
     
     /// <summary>

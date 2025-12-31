@@ -33,6 +33,8 @@ public class FleeBehaviour : SteeringBehaviour
         set => panicDistance = value;
     }
     
+    public Vector2 DirectionalBias => directionalBias;
+    
     /// <summary>
     /// Set bias arah untuk flee direction variation.
     /// Enemy akan blend antara flee murni dan bias direction.

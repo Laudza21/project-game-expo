@@ -122,6 +122,14 @@ public class CircleStrafeBehaviour : SteeringBehaviour
     {
         currentDirection = clockwise ? 1f : -1f;
     }
+    
+    /// <summary>
+    /// Reverse current direction
+    /// </summary>
+    public void ReverseDirection()
+    {
+        currentDirection *= -1f;
+    }
 
     /// <summary>
     /// Randomize current direction

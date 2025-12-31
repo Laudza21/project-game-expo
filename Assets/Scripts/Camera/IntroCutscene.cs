@@ -1,9 +1,11 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
 using System.Collections;
+using TMPro;
+using UnityEngine.UI;
 
 /// <summary>
-/// Dramatic intro cutscene: Player walks in, stops, looks around, then gameplay starts.
+/// Dramatic intro cutscene: Player walks from bright entrance into dark cave.
 /// Attach to an empty GameObject in the scene.
 /// </summary>
 public class IntroCutscene : MonoBehaviour
@@ -14,36 +16,19 @@ public class IntroCutscene : MonoBehaviour
     
     [Tooltip("PlayerInput component untuk disable/enable input")]
     public PlayerInput playerInput;
+    
+    [Tooltip("CaveLightingController untuk sinkronisasi transisi terang-gelap")]
+    public CaveLightingController lightingController;
 
     [Header("=== Walk Settings ===")]
     [Tooltip("Arah jalan masuk player (default: ke kiri/masuk gua)")]
     public Vector2 walkDirection = Vector2.left;
     
-    [Tooltip("Durasi jalan masuk (detik)")]
-    public float walkDuration = 2f;
+    [Tooltip("Durasi jalan masuk (detik) - lebih lama untuk efek dramatis")]
+    public float walkDuration = 5f;
     
     [Tooltip("Kecepatan jalan saat cutscene")]
     public float walkSpeed = 2f;
-
-    [Header("=== Look Around Settings ===")]
-    [Tooltip("Delay setelah jalan sebelum mulai lihat-lihat (detik)")]
-    public float pauseBeforeLook = 0.5f;
-    
-    [Tooltip("Durasi melihat ke setiap arah (detik)")]
-    public float lookDuration = 1f;
-    
-    [Tooltip("Delay antara ganti arah (detik)")]
-    public float pauseBetweenLooks = 0.3f;
-
-    [Header("=== Look Sequence ===")]
-    [Tooltip("Urutan arah yang dilihat player")]
-    public Vector2[] lookSequence = new Vector2[]
-    {
-        Vector2.right,  // Lihat kanan (ke dalam gua)
-        Vector2.left,   // Lihat kiri (ke pintu masuk)
-        Vector2.up,     // Lihat atas (ceiling gua)
-        Vector2.right   // Lihat kanan lagi (siap jalan ke dalam)
-    };
 
     [Header("=== Optional ===")]
     [Tooltip("Auto-play saat scene start")]
@@ -51,6 +36,23 @@ public class IntroCutscene : MonoBehaviour
     
     [Tooltip("Delay sebelum cutscene mulai")]
     public float initialDelay = 0.5f;
+    
+    [Header("=== Dialogue Bubble ===")]
+    [Tooltip("GameObject dengan Image (dialogue box) dan TextMeshPro untuk bubble text")]
+    public GameObject dialogueBubble;
+    
+    [Tooltip("4 frames sprite untuk animasi bubble (frame 1-3: muncul, frame 4: full dengan text)")]
+    public Sprite[] bubbleFrames = new Sprite[4];
+    
+    [Tooltip("Durasi setiap frame animasi (detik)")]
+    public float frameDelay = 0.1f;
+    
+    [Tooltip("Text yang ditampilkan di bubble (contoh: 'Hmm... looks dark in here')")]
+    [TextArea(2, 4)]
+    public string bubbleText = "Hmm... looks dark in here";
+    
+    [Tooltip("Durasi bubble text ditampilkan setelah animasi selesai (detik)")]
+    public float bubbleDuration = 2f;
 
     private Animator playerAnimator;
     private Rigidbody2D playerRb;
@@ -83,6 +85,11 @@ public class IntroCutscene : MonoBehaviour
             Debug.LogError("[IntroCutscene] Player Rigidbody2D not found!");
             return;
         }
+        
+        // SET INITIAL FACING DIRECTION SEBELUM CUTSCENE MULAI
+        // Ini override default Vector2.down dari PlayerAnimationController
+        SetPlayerDirection(walkDirection);
+        Debug.Log($"[IntroCutscene] Initial direction set to: {walkDirection}");
 
         if (playOnStart)
         {
@@ -109,22 +116,39 @@ public class IntroCutscene : MonoBehaviour
 
         // 1. Disable player input dan animation controller
         DisablePlayerControl();
+        
+        // SET FACING DIRECTION IMMEDIATELY - Jangan tunggu initial delay!
+        // Ini mencegah karakter menghadap bawah di frame pertama
+        SetPlayerDirection(walkDirection);
+        Debug.Log("[IntroCutscene] 👤 Initial facing direction set");
+        
+        // PENTING: Wait 1 frame agar animator ter-update!
+        yield return null;
 
         // 2. Initial delay
         yield return new WaitForSeconds(initialDelay);
 
         // ==========================================
-        // PHASE 1: WALKING INTO THE CAVE
+        // PHASE 1: START LIGHTING TRANSITION
         // ==========================================
-        Debug.Log("[IntroCutscene] 🚶 Phase 1: Walking in...");
+        if (lightingController != null)
+        {
+            lightingController.StartTransition();
+            Debug.Log("[IntroCutscene] 💡 Lighting transition started");
+        }
+
+        // ==========================================
+        // PHASE 2: WALKING INTO THE CAVE (BRIGHT → DARK)
+        // ==========================================
+        Debug.Log("[IntroCutscene] 🚶 Walking from bright entrance into dark cave...");
         
-        // Set walk direction untuk animator
+        // Set walk direction untuk animator (sudah di-set di atas, tapi re-confirm)
         SetPlayerDirection(walkDirection);
         
         // Set walking animation (Speed > 0)
         playerAnimator.SetFloat(Speed, walkSpeed);
         
-        // Move player untuk walkDuration
+        // Move player untuk walkDuration (lebih lama untuk efek dramatis)
         float walkTimer = 0f;
         while (walkTimer < walkDuration)
         {
@@ -137,29 +161,86 @@ public class IntroCutscene : MonoBehaviour
         // Stop moving
         playerRb.linearVelocity = Vector2.zero;
         playerAnimator.SetFloat(Speed, 0f);
-        Debug.Log("[IntroCutscene] 🛑 Stopped walking");
-
-        // ==========================================
-        // PHASE 2: PAUSE (DRAMATIC MOMENT)
-        // ==========================================
-        yield return new WaitForSeconds(pauseBeforeLook);
-
-        // ==========================================
-        // PHASE 3: LOOK AROUND
-        // ==========================================
-        Debug.Log("[IntroCutscene] 👀 Phase 2: Looking around...");
+        Debug.Log("[IntroCutscene] 🛑 Reached deep cave - Walking stopped");
         
-        foreach (Vector2 direction in lookSequence)
+        // SET FINAL POSE - Menghadap KANAN
+        // Gunakan SetFacingDirection dari PlayerAnimationController agar direction ter-save
+        if (playerAnimController != null)
         {
-            // Set facing direction
-            SetPlayerDirection(direction);
-            Debug.Log($"[IntroCutscene] Looking: {DirectionToString(direction)}");
-
-            // Wait for look duration
-            yield return new WaitForSeconds(lookDuration);
-
-            // Pause between looks
-            yield return new WaitForSeconds(pauseBetweenLooks);
+            playerAnimController.SetFacingDirection(Vector2.right);
+        }
+        else
+        {
+            // Fallback jika PlayerAnimationController tidak ada
+            SetPlayerDirection(Vector2.right);
+        }
+        Debug.Log("[IntroCutscene] 👉 Final pose: Facing RIGHT");
+        
+        // Wait 1 frame agar animator update
+        yield return null;
+        
+        // ==========================================
+        // PHASE 3: DIALOGUE BUBBLE
+        // ==========================================
+        if (dialogueBubble != null && bubbleFrames.Length >= 4)
+        {
+            Debug.Log("[IntroCutscene] 💬 Showing dialogue bubble animation...");
+            
+            // Get components
+            UnityEngine.UI.Image bubbleImage = dialogueBubble.GetComponent<UnityEngine.UI.Image>();
+            TMPro.TextMeshProUGUI textComponent = dialogueBubble.GetComponentInChildren<TMPro.TextMeshProUGUI>();
+            
+            if (bubbleImage != null)
+            {
+                // Show bubble GameObject
+                dialogueBubble.SetActive(true);
+                
+                // Hide text initially
+                if (textComponent != null)
+                {
+                    textComponent.enabled = false;
+                }
+                
+                // ANIMATE FRAMES 1-3 (Bubble muncul)
+                for (int i = 0; i < 3; i++)
+                {
+                    if (bubbleFrames[i] != null)
+                    {
+                        bubbleImage.sprite = bubbleFrames[i];
+                        Debug.Log($"[IntroCutscene] 💬 Frame {i + 1}/4");
+                        yield return new WaitForSeconds(frameDelay);
+                    }
+                }
+                
+                // FRAME 4 (Bubble penuh + Text muncul)
+                if (bubbleFrames[3] != null)
+                {
+                    bubbleImage.sprite = bubbleFrames[3];
+                    Debug.Log("[IntroCutscene] 💬 Frame 4/4 - Text shown");
+                    
+                    // Show text di frame terakhir
+                    if (textComponent != null)
+                    {
+                        textComponent.enabled = true;
+                        textComponent.text = bubbleText;
+                    }
+                }
+                
+                // Hold bubble dengan text
+                yield return new WaitForSeconds(bubbleDuration);
+                
+                // Hide bubble
+                dialogueBubble.SetActive(false);
+                Debug.Log("[IntroCutscene] 💬 Dialogue bubble hidden");
+            }
+            else
+            {
+                Debug.LogWarning("[IntroCutscene] Dialogue bubble doesn't have Image component!");
+            }
+        }
+        else if (dialogueBubble != null && bubbleFrames.Length < 4)
+        {
+            Debug.LogWarning("[IntroCutscene] Bubble frames array needs 4 sprites! Skipping dialogue.");
         }
 
         // ==========================================
@@ -225,7 +306,8 @@ public class IntroCutscene : MonoBehaviour
         playerAnimator.SetFloat(Horizontal, h);
         playerAnimator.SetFloat(Vertical, v);
 
-        // Handle sprite flip for horizontal
+        // Handle sprite flip for horizontal (SAMA SEPERTI PlayerAnimationController line 155-158)
+        // Ini memastikan flip logic konsisten dengan gameplay normal
         if (h > 0)
             player.transform.localScale = new Vector3(1, 1, 1);
         else if (h < 0)
