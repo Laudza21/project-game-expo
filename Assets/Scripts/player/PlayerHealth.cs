@@ -36,6 +36,7 @@ public class PlayerHealth : MonoBehaviour
     [Header("Damage Feedback")]
     [SerializeField] private float invincibilityTime = 1f;
     [SerializeField] private bool showDamageFlash = true;
+    [SerializeField] private AudioClip hitSound;
     
     private bool isInvincible = false;
     private SpriteRenderer spriteRenderer;
@@ -118,6 +119,11 @@ public class PlayerHealth : MonoBehaviour
         currentHealth = Mathf.Max(currentHealth, 0);
         
         // Debug.Log($"Player took {damage} damage. Health: {currentHealth}/{maxHealth}");
+        
+        if (hitSound != null)
+        {
+            AudioSource.PlayClipAtPoint(hitSound, transform.position);
+        }
         
         OnDamageTaken?.Invoke(damage);
         OnHealthChanged?.Invoke(currentHealth);

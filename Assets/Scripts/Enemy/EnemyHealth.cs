@@ -6,6 +6,7 @@ public class EnemyHealth : MonoBehaviour
     [Header("Health Settings")]
     [SerializeField] private int maxHealth = 100;
     [SerializeField] private int currentHealth;
+    [SerializeField] private AudioClip hitSound;
 
     [Header("Events")]
     public UnityEvent<float> OnTakeDamage;
@@ -31,6 +32,11 @@ public class EnemyHealth : MonoBehaviour
         if (isDead) return;
 
         currentHealth -= damage;
+        
+        if (hitSound != null)
+        {
+            AudioSource.PlayClipAtPoint(hitSound, transform.position);
+        }
         
         // Invoke event for AI implementation (animation etc)
         OnTakeDamage?.Invoke((float)damage);

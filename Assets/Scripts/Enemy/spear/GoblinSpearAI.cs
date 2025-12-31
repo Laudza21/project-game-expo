@@ -5,6 +5,7 @@ using UnityEngine;
 /// Mewarisi BaseEnemyAI untuk logika umum.
 /// Advanced Combat: BlindSpotSeek, Feint, Pacing untuk tactical gameplay.
 /// </summary>
+[RequireComponent(typeof(AudioSource))]
 public class GoblinSpearAI : BaseEnemyAI
 {
     [Header("Spear Attack Settings")]
@@ -14,6 +15,10 @@ public class GoblinSpearAI : BaseEnemyAI
     [SerializeField] private float attackRecovery = 0.5f;
     // [Tooltip("Jangkauan attack spear - jarak dari collider ke collider player")]
     // [SerializeField] private float spearAttackRange = 0.8f; // REMOVED: Use inherited attackRange instead
+    
+    [Header("Audio Settings")]
+    [SerializeField] private AudioClip spearAttackSound;
+    private AudioSource audioSource;
     
     [Header("Engagement Settings")]
     [Tooltip("Jarak untuk mulai tactical mode (BlindSpotSeek/Feint/Attack)")]
@@ -231,6 +236,13 @@ public class GoblinSpearAI : BaseEnemyAI
             {
                 LogDebug("WARNING: PlayerAnimationController not found! BlindSpot detection disabled.", "yellow");
             }
+        }
+        
+        audioSource = GetComponent<AudioSource>();
+        if (audioSource == null) 
+        {
+            // Fallback just in case RequireComponent didn't work immediately in editor
+            audioSource = gameObject.AddComponent<AudioSource>();
         }
     }
 
@@ -1638,4 +1650,11 @@ public class GoblinSpearAI : BaseEnemyAI
         }
     }
     #endif
+    public void PlaySpearAttackSound()
+    {
+        if (audioSource != null && spearAttackSound != null)
+        {
+            audioSource.PlayOneShot(spearAttackSound);
+        }
+    }
 }

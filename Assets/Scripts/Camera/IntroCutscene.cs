@@ -6,8 +6,10 @@ using UnityEngine.UI;
 
 /// <summary>
 /// Dramatic intro cutscene: Player walks from bright entrance into dark cave.
-/// Attach to an empty GameObject in the scene.
+/// Features: Walking animation + Lighting transition (bright to dark)
+/// Phase removed: Look around animation (simplified for dramatic effect)
 /// </summary>
+[ExecuteAlways] // Enable di Editor mode untuk preview!
 public class IntroCutscene : MonoBehaviour
 {
     [Header("=== References ===")]
@@ -47,9 +49,39 @@ public class IntroCutscene : MonoBehaviour
     [Tooltip("Durasi setiap frame animasi (detik)")]
     public float frameDelay = 0.1f;
     
+    [Header("=== Bubble Size (Manual Control) ===")]
+    [Tooltip("Lebar bubble (bisa diatur manual!)")]
+    [Range(40f, 150f)]
+    public float bubbleWidth = 60f;
+    
+    [Tooltip("Tinggi bubble (bisa diatur manual!)")]
+    [Range(30f, 100f)]
+    public float bubbleHeight = 60f;
+    
+    [Header("=== Text Padding (Manual Control) ===")]
+    [Tooltip("Padding atas text (dorong text ke bawah)")]
+    [Range(0f, 30f)]
+    public float textPaddingTop = 12f;
+    
+    [Tooltip("Padding bawah text (dorong text ke atas)")]
+    [Range(0f, 30f)]
+    public float textPaddingBottom = 8f;
+    
+    [Tooltip("Padding kiri-kanan text")]
+    [Range(0f, 20f)]
+    public float textPaddingHorizontal = 3f;
+    
+    [Header("=== Bubble Text ===")]
     [Tooltip("Text yang ditampilkan di bubble (contoh: 'Hmm... looks dark in here')")]
     [TextArea(2, 4)]
     public string bubbleText = "Hmm... looks dark in here";
+    
+    [Tooltip("Enable typewriter effect (text muncul satu-satu)")]
+    public bool enableTypewriter = true;
+    
+    [Tooltip("Kecepatan typewriter (karakter per detik)")]
+    [Range(10f, 100f)]
+    public float typewriterSpeed = 30f;
     
     [Tooltip("Durasi bubble text ditampilkan setelah animasi selesai (detik)")]
     public float bubbleDuration = 2f;
@@ -95,6 +127,87 @@ public class IntroCutscene : MonoBehaviour
         {
             StartCutscene();
         }
+    }
+
+    /// <summary>
+    /// Called when Inspector values change - untuk PREVIEW di Editor!
+    /// </summary>
+    void OnValidate()
+    {
+        // Hanya jalan di Editor mode (tidak saat play)
+        if (!Application.isPlaying && dialogueBubble != null)
+        {
+            RectTransform bubbleRect = dialogueBubble.GetComponent<RectTransform>();
+            if (bubbleRect != null)
+            {
+                // Update bubble size REAL-TIME di Editor!
+                bubbleRect.sizeDelta = new Vector2(bubbleWidth, bubbleHeight);
+            }
+            
+            // Update text positioning juga!
+            TMPro.TextMeshProUGUI textComponent = dialogueBubble.GetComponentInChildren<TMPro.TextMeshProUGUI>();
+            if (textComponent != null)
+            {
+                RectTransform textRect = textComponent.GetComponent<RectTransform>();
+                if (textRect != null)
+                {
+                    // Apply padding dari Inspector fields!
+                    textRect.anchorMin = Vector2.zero;
+                    textRect.anchorMax = Vector2.one;
+                    textRect.pivot = new Vector2(0.5f, 0.5f);
+                    
+                    textRect.offsetMin = new Vector2(textPaddingHorizontal, textPaddingBottom);
+                    textRect.offsetMax = new Vector2(-textPaddingHorizontal, -textPaddingTop);
+                    textRect.anchoredPosition = Vector2.zero;
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// KLIK INI untuk preview bubble & text di Editor! (tanpa play)
+    /// Klik kanan component IntroCutscene → "Preview Bubble in Editor"
+    /// </summary>
+    [ContextMenu("Preview Bubble in Editor")]
+    public void PreviewBubbleInEditor()
+    {
+        if (dialogueBubble == null)
+        {
+            Debug.LogWarning("[IntroCutscene] DialogueBubble tidak di-assign!");
+            return;
+        }
+        
+        // Update bubble size
+        RectTransform bubbleRect = dialogueBubble.GetComponent<RectTransform>();
+        if (bubbleRect != null)
+        {
+            bubbleRect.sizeDelta = new Vector2(bubbleWidth, bubbleHeight);
+            Debug.Log($"[Preview] Bubble size: {bubbleWidth}x{bubbleHeight}");
+        }
+        
+        // Update text positioning
+        TMPro.TextMeshProUGUI textComponent = dialogueBubble.GetComponentInChildren<TMPro.TextMeshProUGUI>();
+        if (textComponent != null)
+        {
+            // SET TEXT dari bubbleText field!
+            textComponent.text = bubbleText;
+            
+            RectTransform textRect = textComponent.GetComponent<RectTransform>();
+            if (textRect != null)
+            {
+                textRect.anchorMin = Vector2.zero;
+                textRect.anchorMax = Vector2.one;
+                textRect.pivot = new Vector2(0.5f, 0.5f);
+                
+                textRect.offsetMin = new Vector2(textPaddingHorizontal, textPaddingBottom);
+                textRect.offsetMax = new Vector2(-textPaddingHorizontal, -textPaddingTop);
+                textRect.anchoredPosition = Vector2.zero;
+                
+                Debug.Log($"[Preview] Text: '{bubbleText}' | Padding: Top={textPaddingTop}, Bottom={textPaddingBottom}, H={textPaddingHorizontal}");
+            }
+        }
+        
+        Debug.Log("[Preview] ✅ Preview applied! Lihat Scene view!");
     }
 
     /// <summary>
@@ -192,6 +305,12 @@ public class IntroCutscene : MonoBehaviour
             
             if (bubbleImage != null)
             {
+                // AUTO SETUP TEXT POSITIONING
+                if (textComponent != null)
+                {
+                    SetupTextInBubble(textComponent);
+                }
+                
                 // Show bubble GameObject
                 dialogueBubble.SetActive(true);
                 
@@ -222,7 +341,21 @@ public class IntroCutscene : MonoBehaviour
                     if (textComponent != null)
                     {
                         textComponent.enabled = true;
-                        textComponent.text = bubbleText;
+                        
+                        // Typewriter effect atau instant?
+                        if (enableTypewriter)
+                        {
+                            // Text muncul satu-satu!
+                            yield return StartCoroutine(TypewriterEffect(textComponent, bubbleText));
+                        }
+                        else
+                        {
+                            // Text muncul langsung
+                            textComponent.text = bubbleText;
+                        }
+                        
+                        // Force text to update untuk calculate size
+                        Canvas.ForceUpdateCanvases();
                     }
                 }
                 
@@ -252,6 +385,24 @@ public class IntroCutscene : MonoBehaviour
         EnablePlayerControl();
 
         cutscenePlaying = false;
+    }
+    
+    /// <summary>
+    /// Typewriter effect - text muncul satu per satu
+    /// </summary>
+    private IEnumerator TypewriterEffect(TMPro.TextMeshProUGUI textComponent, string fullText)
+    {
+        textComponent.text = ""; // Start dengan empty
+        
+        float delay = 1f / typewriterSpeed; // Delay per karakter
+        
+        for (int i = 0; i < fullText.Length; i++)
+        {
+            textComponent.text = fullText.Substring(0, i + 1);
+            yield return new WaitForSeconds(delay);
+        }
+        
+        Debug.Log("[IntroCutscene] 📝 Typewriter complete!");
     }
 
     private void DisablePlayerControl()
@@ -312,6 +463,50 @@ public class IntroCutscene : MonoBehaviour
             player.transform.localScale = new Vector3(1, 1, 1);
         else if (h < 0)
             player.transform.localScale = new Vector3(-1, 1, 1);
+    }
+    
+    /// <summary>
+    /// Auto setup text positioning dengan bubble size MANUAL dari Inspector
+    /// </summary>
+    private void SetupTextInBubble(TMPro.TextMeshProUGUI textComponent)
+    {
+        if (textComponent == null) return;
+        
+        RectTransform textRect = textComponent.GetComponent<RectTransform>();
+        if (textRect == null) return;
+        
+        // === SETUP BUBBLE SIZE MANUAL DARI INSPECTOR ===
+        
+        RectTransform bubbleRect = dialogueBubble.GetComponent<RectTransform>();
+        if (bubbleRect != null)
+        {
+            // PAKAI manual size dari Inspector field!
+            bubbleRect.sizeDelta = new Vector2(bubbleWidth, bubbleHeight);
+            Debug.Log($"[IntroCutscene] � Bubble size from Inspector: {bubbleWidth}x{bubbleHeight}");
+        }
+        
+        // === SETUP TEXT ===
+        
+        // Set anchors ke stretch (fill bubble)
+        textRect.anchorMin = Vector2.zero;
+        textRect.anchorMax = Vector2.one;
+        textRect.pivot = new Vector2(0.5f, 0.5f);
+        
+        // Padding dari Inspector fields!
+        textRect.offsetMin = new Vector2(textPaddingHorizontal, textPaddingBottom);  // Left, Bottom
+        textRect.offsetMax = new Vector2(-textPaddingHorizontal, -textPaddingTop);   // Right, Top (negative!)
+        textRect.anchoredPosition = Vector2.zero;
+        
+        // Text settings
+        textComponent.text = bubbleText;
+        textComponent.alignment = TMPro.TextAlignmentOptions.Center;
+        textComponent.enableWordWrapping = true;
+        textComponent.overflowMode = TMPro.TextOverflowModes.Overflow;
+        
+        // DISABLE auto sizing - pakai font size manual dari Inspector
+        textComponent.enableAutoSizing = false;
+        
+        Debug.Log($"[IntroCutscene] ✅ Bubble setup (manual size, font: {textComponent.fontSize})");
     }
 
     private string DirectionToString(Vector2 dir)
