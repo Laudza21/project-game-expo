@@ -173,7 +173,8 @@ public class BombTrap : MonoBehaviour
         if (hasExploded) return;
         hasExploded = true;
         
-        PlaySound(explosionSound);
+        // SOUND: Dipindahkan ke Animation Event agar sync dengan visual ledakan
+        // PlaySound(explosionSound); // ← DI-COMMENT karena pakai Animation Event
         
         if (animator != null)
         {
@@ -242,6 +243,24 @@ public class BombTrap : MonoBehaviour
             DealExplosionDamage();
         }
         Debug.Log("<color=yellow>💥 [BombTrap] Animation Event: OnExplosionStart</color>");
+    }
+    
+    /// <summary>
+    /// Panggil dari Animation Event untuk memutar explosion sound pada frame tertentu
+    /// </summary>
+    public void PlayExplosionSound()
+    {
+        PlaySound(explosionSound);
+        Debug.Log("<color=orange>🔊 [BombTrap] Animation Event: PlayExplosionSound</color>");
+    }
+    
+    /// <summary>
+    /// Panggil dari Animation Event untuk memutar fuse sound pada frame tertentu
+    /// </summary>
+    public void PlayFuseSound()
+    {
+        PlaySound(fuseSound);
+        Debug.Log("<color=orange>🔊 [BombTrap] Animation Event: PlayFuseSound</color>");
     }
     
     /// <summary>
