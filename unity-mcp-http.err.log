@@ -1,0 +1,35 @@
+
+
++-----------------------------------------------------------------------------+
+|                                                                             |
+|                        \u2584\u2580\u2580 \u2584\u2580\u2588 \u2588\u2580\u2580 \u2580\u2588\u2580 \u2588\u2580\u2584\u2580\u2588 \u2588\u2580\u2580 \u2588\u2580\u2588                        |
+|                        \u2588\u2580  \u2588\u2580\u2588 \u2584\u2584\u2588  \u2588  \u2588 \u2580 \u2588 \u2588\u2584\u2584 \u2588\u2580\u2580                        |
+|                                                                             |
+|                               FastMCP 2.14.1                                |
+|                                                                             |
+|                                                                             |
+|                  \U0001f5a5  Server name: mcp-for-unity-server                       |
+|                                                                             |
+|                  \U0001f4e6 Transport:   HTTP                                       |
+|                  \U0001f517 Server URL:  http://127.0.0.1:8080/mcp                  |
+|                                                                             |
+|                  \U0001f4da Docs:        https://gofastmcp.com                      |
+|                  \U0001f680 Hosting:     https://fastmcp.cloud                      |
+|                                                                             |
++-----------------------------------------------------------------------------+
+
+
+[01/01/26 15:17:32] INFO     Starting MCP server                 server.py:2618
+                             'mcp-for-unity-server' with                       
+                             transport 'http' on                               
+                             http://127.0.0.1:8080/mcp                         
+INFO:     Started server process [30144]
+INFO:     Waiting for application startup.
+2026-01-01 15:17:32,604 - docket.worker - INFO - Starting worker 'LAPTOP-A1IMNIDQ#30144' with the following tasks:
+2026-01-01 15:17:32,604 - docket.worker - INFO - * trace(message: str, ...)
+2026-01-01 15:17:32,604 - docket.worker - INFO - * fail(message: str, ...)
+2026-01-01 15:17:32,604 - docket.worker - INFO - * sleep(seconds: float, ...)
+2026-01-01 15:17:32,606 - mcp.server.streamable_http_manager - INFO - StreamableHTTP session manager started
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8080 (Press CTRL+C to quit)
+2026-01-01 15:18:10,326 - mcp.server.streamable_http_manager - INFO - Created new transport with session ID: 39eec1ea0c804451b339c5da80186685
