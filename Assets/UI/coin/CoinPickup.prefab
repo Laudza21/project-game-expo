@@ -13,7 +13,7 @@ GameObject:
   - component: {fileID: 6509317939358844605}
   - component: {fileID: 7282512966936970778}
   - component: {fileID: 8477785158038236808}
-  m_Layer: 0
+  m_Layer: 7
   m_Name: CoinPickup
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -115,8 +115,8 @@ SpriteRenderer:
   m_AutoUVMaxAngle: 89
   m_LightmapParameters: {fileID: 0}
   m_GlobalIlluminationMeshLod: 0
-  m_SortingLayerID: 0
-  m_SortingLayer: 0
+  m_SortingLayerID: -482709517
+  m_SortingLayer: 4
   m_SortingOrder: 0
   m_Sprite: {fileID: 5670732621190257608, guid: 35880e4aef92cd54a9172f20e59ff595, type: 3}
   m_Color: {r: 1, g: 1, b: 1, a: 1}
@@ -167,6 +167,10 @@ MonoBehaviour:
   bounceHeight: 1.5
   bounceDuration: 0.5
   gravity: 9.8
+  spreadDistance: 1.5
+  collisionLayer:
+    serializedVersion: 2
+    m_Bits: 256
   autoCollect: 1
   collectDelay: 0.3
   magnetRange: 1.5

@@ -1,7 +1,21 @@
 using UnityEngine;
 
+public enum ChestType
+{
+    Common,
+    Rare,
+    Epic
+}
+
 public class ChestController : MonoBehaviour, IInteractable
 {
+    [Header("Chest Type")]
+    [SerializeField] private ChestType chestType = ChestType.Common;
+
+    [Header("Accessory (Epic Only)")]
+    [Tooltip("Assign AccessoryPickup prefab here - only spawns for Epic chests")]
+    [SerializeField] private GameObject accessoryPrefab;
+
     [Header("Settings")]
     [SerializeField] private LootTable lootTable;
     [SerializeField] private Transform spawnPoint;
@@ -53,8 +67,9 @@ public class ChestController : MonoBehaviour, IInteractable
 
         GiveCoins();
         SpawnLoot();
+        SpawnAccessory(); // Epic chest spawns accessory
 
-        Debug.Log("Chest opened!");
+        Debug.Log($"Chest opened! Type: {chestType}");
     }
 
     #region Collision Blocking via Trigger
@@ -151,7 +166,7 @@ public class ChestController : MonoBehaviour, IInteractable
                 {
                     float heightVariation = Random.Range(0.8f, 1.2f);
                     float durationVariation = Random.Range(0.4f, 0.6f);
-                    pickup.Setup(valuePerCoin, bounceHeight * heightVariation, bounceDuration * durationVariation);
+                    pickup.Setup(valuePerCoin, bounceHeight * heightVariation, bounceDuration * durationVariation, GetComponent<Collider2D>());
                 }
             }
         }
@@ -187,5 +202,29 @@ public class ChestController : MonoBehaviour, IInteractable
         {
             Debug.LogWarning("No Loot Table assigned to this Chest!");
         }
+    }
+
+    private void SpawnAccessory()
+    {
+        // Only Epic chests can drop accessories
+        if (chestType != ChestType.Epic) return;
+        
+        if (accessoryPrefab == null)
+        {
+            Debug.LogWarning("[Epic Chest] Accessory Prefab not assigned!");
+            return;
+        }
+
+        Vector3 spawnPos = spawnPoint != null ? spawnPoint.position : transform.position;
+        
+        GameObject accessory = Instantiate(accessoryPrefab, spawnPos, Quaternion.identity);
+        
+        AccessoryPickup pickup = accessory.GetComponent<AccessoryPickup>();
+        if (pickup != null)
+        {
+            pickup.Setup(bounceHeight, bounceDuration, GetComponent<Collider2D>());
+        }
+        
+        Debug.Log($"[Epic Chest] Spawned Accessory: {accessory.name}");
     }
 }

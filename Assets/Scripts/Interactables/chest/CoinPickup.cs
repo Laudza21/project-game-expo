@@ -79,16 +79,23 @@ public class CoinPickup : MonoBehaviour
     /// <summary>
     /// Setup coin dengan nilai dan bounce height tertentu
     /// </summary>
-    public void Setup(int value, float height, float duration)
+    private Collider2D ignoredCollider;
+
+    /// <summary>
+    /// Setup coin dengan nilai dan bounce height tertentu.
+    /// ignoreCol: Collider yang harus diabaikan saat raycast (misal: Chest sendiri)
+    /// </summary>
+    public void Setup(int value, float height, float duration, Collider2D ignoreCol = null)
     {
         coinValue = value;
         bounceHeight = height;
         bounceDuration = duration;
+        ignoredCollider = ignoreCol;
+        
         startPosition = transform.position;
         bounceTimer = 0f;
         isBouncing = true;
         
-        // Calculate landing position away from player
         CalculateLandPosition();
     }
     
@@ -123,9 +130,6 @@ public class CoinPickup : MonoBehaviour
             if (awayFromPlayerDir == Vector2.zero) awayFromPlayerDir = Random.insideUnitCircle.normalized;
 
             // Blend: we want the general direction to be 'away', but with some randomness (cone)
-            // Current 'offset' is completely random. Let's biases it.
-            
-            // Create a randomized direction within a cone opposite to the player
             float coneAngle = 90f; // Spread angle in degrees
             float randomSpread = Random.Range(-coneAngle / 2f, coneAngle / 2f);
             
@@ -137,18 +141,31 @@ public class CoinPickup : MonoBehaviour
             targetLandPosition.z = startPosition.z;
         }
 
-        // Check collision with walls
+        // Check collision with walls using RaycastAll to skip Ignored Collider
         Vector2 direction = targetLandPosition - startPosition;
         float checkDistance = direction.magnitude;
         
-        // Raycast from start to target
-        RaycastHit2D hit = Physics2D.Raycast(startPosition, direction.normalized, checkDistance, collisionLayer);
+        // Raycast ALL hits
+        RaycastHit2D[] hits = Physics2D.RaycastAll(startPosition, direction.normalized, checkDistance, collisionLayer);
         
-        if (hit.collider != null)
+        // Sort by distance using System.Array.Sort
+        System.Array.Sort(hits, (x, y) => x.distance.CompareTo(y.distance));
+        
+        foreach (var hit in hits)
         {
+            if (hit.collider == null) continue;
+            
+            // Skip ignored collider (and its children)
+            if (ignoredCollider != null && (hit.collider == ignoredCollider || hit.collider.transform.IsChildOf(ignoredCollider.transform)))
+            {
+                continue;
+            }
+            
+            // Stop at first valid wall
             // If hit wall, land slightly before the wall
             targetLandPosition = hit.point - (direction.normalized * 0.3f);
             targetLandPosition.z = startPosition.z;
+            break; 
         }
     }
 

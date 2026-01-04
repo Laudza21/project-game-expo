@@ -27,11 +27,11 @@ public class AccessoryAnimationSync : MonoBehaviour
     [SerializeField] private bool hasAccessory = false;
     [SerializeField] private string currentAccessoryType = ""; // "deer" atau "rabbit"
     
-    [Header("=== POSITION OFFSETS (KECUALI DOWN) ===")]
+    [Header("=== POSITION OFFSETS ===")]
+    [Tooltip("Posisi accessory saat player hadap BAWAH")]
+    [SerializeField] private Vector2 offsetDown = Vector2.zero;
     [Tooltip("Posisi accessory saat player hadap ATAS")]
     [SerializeField] private Vector2 offsetUp = new Vector2(0f, 0.3f);
-    [Tooltip("Posisi accessory saat player hadap KANAN/KIRI")]
-    [SerializeField] private Vector2 offsetSide = new Vector2(0f, 0.4f);
     
     [Header("=== BOBBING EFFECT ===")]
     [Tooltip("Aktifkan efek naik-turun mengikuti sprite player")]
@@ -129,14 +129,12 @@ public class AccessoryAnimationSync : MonoBehaviour
         }
         
         // Handle flip untuk arah kiri
-        if (spriteRenderer != null)
-        {
-            spriteRenderer.flipX = horizontal < -0.1f;
-        }
+        // Flip handled by Parent Scale automatically
         
         // Adjust posisi berdasarkan arah hadap
-        // DOWN = pakai posisi dari Unity (basePosition)
-        // UP/SIDE = pakai offset
+        // DOWN = Inspector (offsetDown)
+        // SIDE = Scene View (basePosition)
+        // UP = Inspector (offsetUp)
         
         Vector3 targetPosition;
         
@@ -150,19 +148,20 @@ public class AccessoryAnimationSync : MonoBehaviour
             }
             else
             {
-                // BAWAH - pakai posisi dari Unity Transform!
-                targetPosition = basePosition;
+                // BAWAH - pakai offset inspector
+                targetPosition = new Vector3(offsetDown.x, offsetDown.y, 0f);
             }
         }
         else if (Mathf.Abs(horizontal) > 0.1f)
         {
-            // KIRI/KANAN - pakai offset
-            targetPosition = new Vector3(offsetSide.x, offsetSide.y, 0f);
+            // KIRI/KANAN - pakai posisi Scene View (basePosition)
+            // Flip handled by Parent Scale
+            targetPosition = basePosition;
         }
         else
         {
-            // Default (idle) - pakai posisi dari Unity Transform
-            targetPosition = basePosition;
+            // Default (idle) - asumsi Down (pakai offset inspector)
+            targetPosition = new Vector3(offsetDown.x, offsetDown.y, 0f);
         }
         
         // === OFFSET SYSTEM (Data-Driven > Bobbing) ===
