@@ -19,7 +19,7 @@ public class CombatManager : MonoBehaviour
     
     [Header("Combat Slot Settings")]
     [Tooltip("Jarak slot dari player")]
-    [SerializeField] private float slotDistance = 3.5f; // Increased from 2.5f for more space
+    [SerializeField] private float slotDistance = 4.5f; // Increased from 3.5f for more space (prevents crowd jitter)
     [Tooltip("Jumlah slot di sekitar player (6 = optimal hex, 8 = crowded)")]
     [SerializeField] private int numberOfSlots = 6; // Reduced from 8 to prevent overlap
     
@@ -46,7 +46,7 @@ public class CombatManager : MonoBehaviour
         { BaseEnemyAI.AIState.BlindSpotSeek, 2 },
         { BaseEnemyAI.AIState.Feint, 2 },
         { BaseEnemyAI.AIState.Retreat, 2 },
-        { BaseEnemyAI.AIState.Chase, 2 },       // WAS 3 - Max 2 chase supaya tidak numpuk!
+        { BaseEnemyAI.AIState.Chase, 99 },      // FIXED: Unlimited chase! Biar semua ngejar kalau player lari.
     };
     private Dictionary<BaseEnemyAI.AIState, HashSet<GameObject>> stateOccupants = new();
     

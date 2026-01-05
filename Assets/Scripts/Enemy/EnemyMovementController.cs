@@ -52,6 +52,11 @@ public class EnemyMovementController : MonoBehaviour
     private enum PathfindingMode { None, Chase, Flee, Patrol }
     private PathfindingMode pathfindingMode = PathfindingMode.None;
     private Vector3? pathfindingDestination; // For flee: the safe point to reach
+    
+    // Narrow Path Queue System
+    private List<Pathfinding.NarrowPathQueueManager.NarrowSegment> currentNarrowSegments;
+    private bool isWaitingInNarrowQueue = false;
+    private Pathfinding.NarrowPathQueueManager.NarrowSegment? currentNarrowSegment;
 
     public void Initialize(FormationManager formationManager = null)
     {
@@ -267,6 +272,31 @@ public class EnemyMovementController : MonoBehaviour
             // Follow path
             if (currentPath != null && currentPath.Count > 0)
             {
+                // ===== NARROW PATH QUEUE CHECK =====
+                bool shouldWait = CheckNarrowPathQueue();
+                if (shouldWait)
+                {
+                    // Slow down dramatically while waiting
+                    if (steeringManager != null && Pathfinding.NarrowPathQueueManager.Instance != null)
+                    {
+                        steeringManager.MaxSpeed = InitialMaxSpeed * Pathfinding.NarrowPathQueueManager.Instance.GetWaitingSpeedMultiplier();
+                    }
+                    isWaitingInNarrowQueue = true;
+                }
+                else
+                {
+                    // Restore speed if we were waiting
+                    if (isWaitingInNarrowQueue)
+                    {
+                        if (steeringManager != null)
+                            steeringManager.MaxSpeed = InitialMaxSpeed;
+                        isWaitingInNarrowQueue = false;
+                    }
+                    
+                    // Check if exited narrow segment
+                    CheckNarrowPathExit();
+                }
+                
                 // Skip waypoints that are too close (aggressive waypoint skipping)
                 // This prevents enemy from stopping at every tiny waypoint
                 while (currentPathIndex < currentPath.Count)
@@ -282,8 +312,8 @@ public class EnemyMovementController : MonoBehaviour
                         if (currentPathIndex < currentPath.Count)
                         {
                             float distToNext = Vector2.Distance(transform.position, currentPath[currentPathIndex]);
-                            // If next waypoint is very close (< 1.5m), skip it too
-                            if (distToNext < 1.5f && currentPathIndex < currentPath.Count - 1)
+                            // If next waypoint is very close, skip it too (Reduced from 1.5f to 0.2f)
+                            if (distToNext < 0.2f && currentPathIndex < currentPath.Count - 1)
                             {
                                 continue; // Skip to next waypoint
                             }
@@ -560,6 +590,69 @@ public class EnemyMovementController : MonoBehaviour
         {
             currentPath = Pathfinding.PathfindingManager.Instance.FindPath(transform.position, targetPos);
             currentPathIndex = 0;
+            
+            // Analyze path for narrow segments
+            if (Pathfinding.NarrowPathQueueManager.Instance != null && currentPath != null)
+            {
+                currentNarrowSegments = Pathfinding.NarrowPathQueueManager.Instance.AnalyzePath(currentPath);
+            }
+            else
+            {
+                currentNarrowSegments = null;
+            }
+        }
+    }
+    
+    /// <summary>
+    /// Check if approaching a narrow path segment and request queue entry.
+    /// Returns true if should wait (slow down).
+    /// </summary>
+    private bool CheckNarrowPathQueue()
+    {
+        if (Pathfinding.NarrowPathQueueManager.Instance == null) return false;
+        if (currentNarrowSegments == null || currentNarrowSegments.Count == 0) return false;
+        if (currentPath == null || currentPathIndex >= currentPath.Count) return false;
+        
+        // Find narrow segment that contains current waypoint or is ahead
+        foreach (var segment in currentNarrowSegments)
+        {
+            // Check if we're approaching or inside this narrow segment
+            if (currentPathIndex >= segment.startIndex - 1 && currentPathIndex <= segment.endIndex)
+            {
+                // Check if we need to wait
+                if (Pathfinding.NarrowPathQueueManager.Instance.ShouldWaitForQueue(gameObject, transform.position, segment))
+                {
+                    currentNarrowSegment = segment;
+                    return true;
+                }
+                
+                // We have permission or are inside - track it
+                currentNarrowSegment = segment;
+                return false;
+            }
+        }
+        
+        return false;
+    }
+    
+    /// <summary>
+    /// Check if exited narrow path segment and notify manager.
+    /// </summary>
+    private void CheckNarrowPathExit()
+    {
+        if (Pathfinding.NarrowPathQueueManager.Instance == null) return;
+        if (!currentNarrowSegment.HasValue) return;
+        
+        var segment = currentNarrowSegment.Value;
+        
+        // Check if we've passed the exit point
+        float distToExit = Vector2.Distance(transform.position, segment.exitPoint);
+        bool pastExit = currentPathIndex > segment.endIndex;
+        
+        if (pastExit || distToExit < 0.5f)
+        {
+            Pathfinding.NarrowPathQueueManager.Instance.ExitNarrow(gameObject);
+            currentNarrowSegment = null;
         }
     }
     
@@ -878,6 +971,15 @@ public class EnemyMovementController : MonoBehaviour
         pathfindingTarget = null;
         pathfindingMode = PathfindingMode.None;
         pathfindingDestination = null;
+        
+        // Clean up narrow path queue state
+        if (Pathfinding.NarrowPathQueueManager.Instance != null)
+        {
+            Pathfinding.NarrowPathQueueManager.Instance.ExitNarrow(gameObject);
+        }
+        currentNarrowSegments = null;
+        currentNarrowSegment = null;
+        isWaitingInNarrowQueue = false;
         
         seekBehaviour.IsEnabled = false;
         fleeBehaviour.IsEnabled = false;

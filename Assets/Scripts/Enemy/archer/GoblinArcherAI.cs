@@ -33,15 +33,26 @@ public class GoblinArcherAI : BaseEnemyAI
     [Header("Kiting Exhaustion Settings")]
     [Tooltip("Max durasi Archer bisa kiting terus-menerus sebelum harus menembak")]
     [SerializeField] private float maxContinuousKiteTime = 4.0f;
+    
+    [Header("Audio Settings")]
+    [Tooltip("Sound effect saat menarik busur (di awal animasi)")]
+    [SerializeField] private AudioClip chargeSound; // Suara tarik busur
+    [Tooltip("Sound effect saat melepas panah (di event FireArrow)")]
+    [SerializeField] private AudioClip shootSound;  // Suara lepas panah
+    [SerializeField] private AudioSource audioSource;
 
     private float lastShootTime;
     private bool isShooting;
+    private bool hasFiredThisAttack; // Guard against double Animation Event
     
     // Cornered Detection
     private float corneredTimer = 0f;
     private float lastDesperateShotTime = -999f; // Cooldown tracker
     private float continuousKiteStartTime = -999f; // Track kapan mulai kiting
     private bool isKiting = false;
+    
+    // Hysteresis buffer to prevent flip-flop between kiting and approaching
+    private const float KITING_HYSTERESIS = 1.5f; // Must be this much past kitingDistance before stopping flee
     
     // Search State Variables
     private bool isSearchingArea;
@@ -149,8 +160,11 @@ public class GoblinArcherAI : BaseEnemyAI
             return;
         }
 
-        // 2. Logika Kiting (Jaga Jarak)
-        if (distanceToPlayer < kitingDistance)
+        // 2. Logika Kiting (Jaga Jarak) - WITH HYSTERESIS
+        // Jika sudah kiting, butuh jarak lebih jauh untuk berhenti flee (prevent flip-flop)
+        float effectiveKitingDistance = isKiting ? (kitingDistance + KITING_HYSTERESIS) : kitingDistance;
+        
+        if (distanceToPlayer < effectiveKitingDistance)
         {
             // Track kiting time
             if (!isKiting)
@@ -272,6 +286,10 @@ public class GoblinArcherAI : BaseEnemyAI
         switch (state)
         {
             case AIState.Attack:
+                // Reset kiting state - attack means we committed, fresh evaluation after
+                isKiting = false;
+                corneredTimer = 0f;
+                
                 // STRICT STATIONARY CHECK
                 if (movementController != null) movementController.StopMoving();
                 if (rb != null) rb.linearVelocity = Vector2.zero;
@@ -363,6 +381,7 @@ public class GoblinArcherAI : BaseEnemyAI
     private System.Collections.IEnumerator ShootRoutine()
     {
         isShooting = true;
+        hasFiredThisAttack = false; // Reset guard for this attack cycle
         
         // 1. Start attack animation (Arrow will be fired via Animation Event calling AnimEvent_FireArrow)
         if (enemyAnimator != null) enemyAnimator.PlayAttack();
@@ -376,10 +395,42 @@ public class GoblinArcherAI : BaseEnemyAI
     }
 
     /// <summary>
+    /// Event baru untuk sound tarik busur (di awal animasi).
+    /// </summary>
+    public void AnimEvent_PrepareToShoot()
+    {
+        // Debug.Log($"[{gameObject.name}] Event 'PrepareToShoot' fired!");
+        if (audioSource != null && chargeSound != null)
+        {
+            audioSource.PlayOneShot(chargeSound);
+        }
+        else
+        {
+             // Debug.LogWarning($"[{gameObject.name}] Missing Audio Source or Charge Sound!");
+        }
+    }
+
+    /// <summary>
     /// Dipanggil via Animation Event saat animasi Bow melepas panah.
     /// </summary>
     public void AnimEvent_FireArrow()
     {
+        // Guard: Only fire once per attack cycle (prevents double Animation Event)
+        if (hasFiredThisAttack) return;
+        hasFiredThisAttack = true;
+        
+        // Debug.Log($"[{gameObject.name}] Event 'FireArrow' fired!");
+
+        // Play shoot sound
+        if (audioSource != null && shootSound != null)
+        {
+            audioSource.PlayOneShot(shootSound);
+        }
+        else
+        {
+             // Debug.LogWarning($"[{gameObject.name}] Missing Audio Source or Shoot Sound!");
+        }
+        
         FireArrow();
         lastShootTime = Time.time;
     }

@@ -308,7 +308,7 @@ public abstract class BaseEnemyAI : MonoBehaviour
         if (currentState == AIState.Attack) return;
         
         // Priority 1: Face Movement Direction (if moving)
-        if (rb != null && rb.linearVelocity.magnitude > 0.1f)
+        if (rb != null && rb.linearVelocity.magnitude > 0.5f)
         {
             // Update Animator facing direction based on movement
             if (enemyAnimator != null)

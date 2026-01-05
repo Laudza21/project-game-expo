@@ -164,6 +164,29 @@ RaycastHit2D hit = Physics2D.Raycast(transform.position, dirToPlayer, distToPlay
 
 ---
 
+### 6. Narrow Path Queue System (`NarrowPathQueueManager.cs`)
+**Lokasi**: `Assets/Scripts/Enemy/Pathfinding/NarrowPathQueueManager.cs`
+
+Sistem yang membuat enemy mengantri di jalan sempit. Yang di depan jalan duluan, yang lain nunggu giliran.
+
+**Cara Kerja:**
+1. Otomatis deteksi jalan sempit dari Grid (width ≤ 2 nodes)
+2. Enemy yang pertama sampai masuk, yang lain menunggu
+3. Enemy yang menunggu geraknya diperlambat (15% speed)
+4. Saat enemy depan keluar, giliran enemy berikutnya
+
+**Setup di Inspector:**
+| Field | Default | Description |
+|-------|---------|-------------|
+| `narrowWidthThreshold` | 2 | Lebar maksimum (nodes) dianggap sempit |
+| `queueTriggerDistance` | 1.5 | Jarak untuk mulai queue logic |
+| `waitingSpeedMultiplier` | 0.15 | Speed saat menunggu (15%) |
+| `minEnemySpacing` | 1.2 | Jarak minimum antar enemy di koridor |
+
+**Catatan:** Tambahkan `NarrowPathQueueManager` component ke GameObject yang sama dengan `PathfindingManager`.
+
+---
+
 ## Troubleshooting
 
 ### Enemy Tidak Bisa Pathfind
@@ -179,6 +202,12 @@ RaycastHit2D hit = Physics2D.Raycast(transform.position, dirToPlayer, distToPlay
 1. Pastikan chest ada di layer yang termasuk `unwalkableMask`
 2. Refresh Grid jika chest ditambahkan runtime
 
+### Enemy Stuck di Jalan Sempit
+1. Pastikan `NarrowPathQueueManager` ada di scene
+2. Cek `narrowWidthThreshold` sesuai dengan ukuran koridor
+3. Increase `minEnemySpacing` jika enemy tabrakan
+
 ---
 
-*Dokumentasi ini dibuat: 2026-01-06*
+*Dokumentasi ini diupdate: 2026-01-06*
+
