@@ -57,6 +57,19 @@ public class EnemyMovementController : MonoBehaviour
     {
         steeringManager = GetComponent<SteeringManager>();
         SetupBehaviours(formationManager);
+        
+        // Cache initial speed
+        InitialMaxSpeed = steeringManager != null ? steeringManager.MaxSpeed : 3.5f;
+    }
+
+    public float InitialMaxSpeed { get; private set; }
+
+    public void SetMaxSpeed(float speed)
+    {
+        if (steeringManager != null)
+        {
+            steeringManager.MaxSpeed = speed;
+        }
     }
 
     private void SetupBehaviours(FormationManager formationManager)
@@ -150,6 +163,8 @@ public class EnemyMovementController : MonoBehaviour
                 case PathfindingMode.Chase:
                     if (pathfindingTarget != null)
                         targetPos = pathfindingTarget.position;
+                    else if (pathfindingDestination.HasValue)
+                        targetPos = pathfindingDestination.Value;
                     else
                     {
                         isPathfinding = false;
@@ -422,6 +437,8 @@ public class EnemyMovementController : MonoBehaviour
         }
     }
     
+    private float lastPathUpdateTime; // Time throttle
+
     /// <summary>
     /// Chase to a specific position with pathfinding. 
     /// Uses chase speed/animation (no arrival slowdown).
@@ -429,6 +446,28 @@ public class EnemyMovementController : MonoBehaviour
     /// </summary>
     public void SetChaseDestination(Vector3 destination)
     {
+        // Check if we are switching from Target-Follow mode to Destination-Follow mode
+        // If pathfindingTarget is NOT null, it means we were following a transform.
+        // We MUST update immediately to switch to static position logic.
+        bool isSwitchingModes = (pathfindingTarget != null);
+
+        // Prevent spamming path updates if destination hasn't changed much
+        // ONLY check this if we are NOT switching modes (i.e. already following a vector)
+        if (!isSwitchingModes && isPathfinding && pathfindingMode == PathfindingMode.Chase && pathfindingDestination.HasValue)
+        {
+             // PRIMARY CHECK: Distance (Spatial)
+             if (Vector3.Distance(pathfindingDestination.Value, destination) < 0.5f) 
+             {
+                 // SECONDARY CHECK: Time (Temporal) - Force update every 0.5s just in case
+                 if (Time.time < lastPathUpdateTime + 0.5f)
+                    return; 
+             }
+        }
+        
+        // Throttling for new paths (prevent flickering states from spamming recalc)
+        // IGNORE throttle if switching modes (Critical for Memory Chase transition)
+        if (!isSwitchingModes && Time.time < lastPathUpdateTime + 0.1f) return;
+
         if (Pathfinding.PathfindingManager.Instance != null)
         {
             isPathfinding = true;
@@ -440,6 +479,7 @@ public class EnemyMovementController : MonoBehaviour
             seekBehaviour.Target = null;
             seekBehaviour.UseArrival = false; // No slowdown - keep running!
             
+            lastPathUpdateTime = Time.time;
             UpdatePath(destination);
         }
         

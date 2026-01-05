@@ -117,7 +117,26 @@ public class GoblinArcherAI : BaseEnemyAI
                 // Memory Active: Keep chasing Real Position!
                 // Ignore kiting tactics until we see the player again
                 // This ensures we pathfind around walls instead of trying to kite through them
-                if (movementController != null) movementController.SetChaseMode(player);
+                
+                // FIX: If hidden, move to lastKnownPosition + OVERSHOOT (0.7m past corner)
+                Vector3 chaseTarget = lastKnownPlayerPosition;
+                if (lastKnownPlayerVelocity.sqrMagnitude > 0.1f)
+                {
+                    chaseTarget += (Vector3)lastKnownPlayerVelocity.normalized * 0.7f;
+                }
+
+                if (movementController != null) 
+                    movementController.SetChaseDestination(chaseTarget);
+                
+                // Check distance to OVERSHOOT position
+                float distToTarget = Vector2.Distance(transform.position, chaseTarget);
+                if (distToTarget < 0.6f)
+                {
+                    // Reached the OVERSHOOT spot!
+                    // Trigger Search!
+                     ChangeState(AIState.Search);
+                }
+                    
                 return; // SKIP logic kiting & shooting!
             }
         }
@@ -283,21 +302,24 @@ public class GoblinArcherAI : BaseEnemyAI
         {
             float distToLastKnown = Vector2.Distance(transform.position, lastKnownPlayerPosition);
             
-            if (distToLastKnown > 1.5f)
+            // Should be close to corner
+            if (distToLastKnown > 0.6f)
             {
                 // Still moving to position - Run!
                 movementController.SetChaseDestination(lastKnownPlayerPosition);
             }
             else
             {
-                // Reached position! Start investigating area (Walk)
+                // Reached position! 
+                // Don't stop! Immediately start investigating area (Predictive Run)
                 isSearchingArea = true;
-                nextSearchMoveTime = Time.time + 0.5f; // Pause briefly
-                movementController.StopMoving();
+                nextSearchMoveTime = Time.time; // NO DELAY! Immediate prediction
+                // movementController.StopMoving(); // REMOVED
             }
         }
         // PHASE 2: Wander around (Predictive -> Random)
-        else
+        // CHECK: Use 'if' instead of 'else' so we can fall through from Phase 1
+        if (isSearchingArea)
         {
             if (Time.time >= nextSearchMoveTime)
             {
@@ -307,22 +329,27 @@ public class GoblinArcherAI : BaseEnemyAI
                 if (!hasCheckedPredictedPosition && lastKnownPlayerVelocity.sqrMagnitude > 0.1f)
                 {
                     // Debug.Log("Archer Search: Predictive path...");
-                    Vector3 predictedOffset = lastKnownPlayerVelocity.normalized * 5.0f; // Check 5m ahead
+                    Vector3 predictedOffset = lastKnownPlayerVelocity.normalized * 6.0f; // Increased distance
                     searchPoint = lastKnownPlayerPosition + predictedOffset;
                     hasCheckedPredictedPosition = true;
+                    
+                    // PREDICTIVE WALK: Use Patrol Mode
+                    if (movementController != null)
+                        movementController.SetPatrolDestination(searchPoint);
                 }
                 else
                 {
                     // WHY 2: Random Wander
                     Vector2 randomOffset = Random.insideUnitCircle * 4.0f; 
                     searchPoint = lastKnownPlayerPosition + (Vector3)randomOffset;
+                    
+                    // Random wander -> Patrol Speed
+                    if (movementController != null)
+                        movementController.SetPatrolDestination(searchPoint);
                 }
                 
-                // Move there using Patrol (Walk) speed
-                movementController.SetPatrolDestination(searchPoint);
-                
                 // Set next move time
-                nextSearchMoveTime = Time.time + Random.Range(2.5f, 4.0f);
+                nextSearchMoveTime = Time.time + Random.Range(2.0f, 3.5f);
             }
             
             // Timeout Check

@@ -24,6 +24,15 @@ public class SteeringManager : MonoBehaviour
         Priority        // Gunakan behaviour pertama yang menghasilkan force > 0
     }
 
+    /// <summary>
+    /// Property for dynamic speed adjustment (Walk vs Run)
+    /// </summary>
+    public float MaxSpeed 
+    { 
+        get { return maxSpeed; } 
+        set { maxSpeed = value; } 
+    }
+
     private void Awake()
     {
         rb = GetComponent<Rigidbody2D>();

@@ -311,9 +311,35 @@ public class GoblinSpearAI : BaseEnemyAI
                 // HYBRID: Memory still active! Keep chasing player's REAL position!
                 // This makes enemy aggressively pursue even without direct line of sight
                 // They "know" where player is going and will pathfind around obstacles
-                movementController.SetChaseMode(player);
-                LogDebug($"Memory active! Chasing player's real position... (memory: {chaseMemoryEndTime - Time.time:F1}s)", "cyan");
-                return; // RETURN HERE: Focus on chasing until player is visible again! Don't do formation/tactics!
+                
+                // REVERTED: Do NOT update known position. Chase the MEMORY (last seen pos).
+                // If we reach there and still don't see player -> Search State triggers.
+                
+                // FIX: If hidden, move to lastKnownPosition + OVERSHOOT
+                // User wants "Run past wall" -> "Turn" -> "Search".
+                // We add a small offset in the direction of velocity to force running PAST the corner.
+                Vector3 chaseTarget = lastKnownPlayerPosition;
+                if (lastKnownPlayerVelocity.sqrMagnitude > 0.1f)
+                {
+                    chaseTarget += (Vector3)lastKnownPlayerVelocity.normalized * 0.7f; // Overshoot by 0.7m
+                }
+
+                movementController.SetChaseDestination(chaseTarget);
+                
+                LogDebug($"Memory active! Chasing OVERSHOOT position... (memory: {chaseMemoryEndTime - Time.time:F1}s)", "cyan");
+                
+                // Check distance to OVERSHOOT position (not just corner)
+                float distToTarget = Vector2.Distance(transform.position, chaseTarget);
+                if (distToTarget < 0.6f) // Keep tight threshold
+                {
+                    // Reached the OVERSHOOT spot! Now we are past the wall.
+                    // Trigger Search!
+                     LogDebug("Reached last known position but no player! Switching to Search...", "yellow");
+                     isRushingToAttack = false;
+                     ChangeState(AIState.Search);
+                }
+                
+                return; // RETURN HERE: Focus on chasing memory!
             }
         }
         
@@ -1183,47 +1209,54 @@ public class GoblinSpearAI : BaseEnemyAI
         {
             float distToLastKnown = Vector2.Distance(transform.position, lastKnownPlayerPosition);
             
-            if (distToLastKnown > 1.5f)
+            // CRITICAL TUNING: Must be close to corner before switching!
+            // Was 1.5f -> Slowed down too early. Now 0.5f -> Runs INTO the turn.
+            if (distToLastKnown > 0.6f) 
             {
                 // Still moving to position - Run!
                 movementController.SetChaseDestination(lastKnownPlayerPosition);
             }
             else
             {
-                // Reached position! Start investigating area (Walk)
-                LogDebug("Last known position reached. Starting area search...", "cyan");
+                // Reached position! 
+                // Don't stop! Immediately start investigating area (Predictive Run)
+                LogDebug("Last known position reached. Continuing search...", "cyan");
                 isSearchingArea = true;
-                nextSearchMoveTime = Time.time + 0.5f; // Pause briefly
-                movementController.StopMoving();
+                nextSearchMoveTime = Time.time; // NO DELAY! Immediate prediction
+                // movementController.StopMoving(); // REMOVED: Keep momentum!
             }
         }
         // PHASE 2: Wander around (Predictive -> Random)
-        else
+        // CHECK: Use 'if' instead of 'else' so we can fall through immediately from Phase 1
+        if (isSearchingArea)
         {
-            if (Time.time >= nextSearchMoveTime)
-            {
-                Vector3 searchPoint;
+                if (Time.time >= nextSearchMoveTime)
+                {
+                    Vector3 searchPoint;
 
-                // TRY 1: Prediction based on velocity (First move only)
-                if (!hasCheckedPredictedPosition && lastKnownPlayerVelocity.sqrMagnitude > 0.1f)
+                    if (!hasCheckedPredictedPosition && lastKnownPlayerVelocity.sqrMagnitude > 0.1f)
                 {
                     LogDebug("Search: Checking predicted path (Velocity Extrapolation)...", "cyan");
-                    Vector3 predictedOffset = lastKnownPlayerVelocity.normalized * 5.0f; // Check 5m ahead
+                    Vector3 predictedOffset = lastKnownPlayerVelocity.normalized * 6.0f; // Increased Check distance (was 5m)
                     searchPoint = lastKnownPlayerPosition + predictedOffset;
                     hasCheckedPredictedPosition = true; // Mark done
+                    
+                    // PREDICTIVE WALK: Use Patrol Mode (Slower/Cautious) for the prediction!
+                    // User request: "jalan ke arah setelah belokan" (Walk after turn)
+                    movementController.SetPatrolDestination(searchPoint);
                 }
                 else
                 {
-                    // TRY 2: Random Wander
+                    // TRY 2: Random Wander (Walk)
                     Vector2 randomOffset = Random.insideUnitCircle * 4.0f; 
                     searchPoint = lastKnownPlayerPosition + (Vector3)randomOffset;
+                    
+                    // Wander -> Patrol Speed
+                    movementController.SetPatrolDestination(searchPoint);
                 }
                 
-                // Move there using Patrol (Walk) speed
-                movementController.SetPatrolDestination(searchPoint);
-                
-                // Set next move time
-                nextSearchMoveTime = Time.time + Random.Range(2.5f, 4.0f);
+                // Set next move time (Only relevant for subsequent random wanders)
+                nextSearchMoveTime = Time.time + Random.Range(2.0f, 3.5f);
             }
             
             // Timeout Check
@@ -1232,7 +1265,7 @@ public class GoblinSpearAI : BaseEnemyAI
                 LogDebug("Search complete. Returning to patrol.", "cyan");
                 ChangeState(AIState.Patrol);
             }
-        }
+    }
     }
 
     // ==========================================

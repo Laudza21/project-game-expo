@@ -62,6 +62,7 @@ public abstract class BaseEnemyAI : MonoBehaviour
     protected EnemyMovementController movementController;
     protected Collider2D myBodyCollider;
     protected Collider2D playerBodyCollider;
+    protected Rigidbody2D playerRb;
 
     // State Variables
     protected float stunEndTime;
@@ -76,7 +77,7 @@ public abstract class BaseEnemyAI : MonoBehaviour
     protected float searchEndTime;
     [Header("Chase Memory Settings")]
     [Tooltip("How long enemy 'remembers' player after losing sight")]
-    [SerializeField] protected float chaseMemoryDuration = 10f;
+    [SerializeField] protected float chaseMemoryDuration = 38f;
     [Tooltip("How long enemy searches at last known position")]
     [SerializeField] protected float searchDuration = 3f;
     
@@ -131,6 +132,7 @@ public abstract class BaseEnemyAI : MonoBehaviour
         if (player != null)
         {
             playerBodyCollider = GetBodyCollider(player);
+            playerRb = player.GetComponent<Rigidbody2D>();
         }
         
         // DEBUG: Verify correct colliders were found
@@ -139,6 +141,13 @@ public abstract class BaseEnemyAI : MonoBehaviour
             $"myBodyCollider = {(myBodyCollider != null ? myBodyCollider.gameObject.name : "NULL")} | " +
             $"playerBodyCollider = {(playerBodyCollider != null ? playerBodyCollider.gameObject.name : "NULL")}");
         #endif
+
+        // HOTFIX: Enforce 38s chase memory if inspector has old value
+        if (chaseMemoryDuration < 38f)
+        {
+            chaseMemoryDuration = 38f;
+            Debug.Log($"[{gameObject.name}] Auto-updated Chase Memory Duration to 38s (was {chaseMemoryDuration})");
+        }
 
         SetupPatrol();
         ChangeState(AIState.Patrol);
@@ -236,7 +245,8 @@ public abstract class BaseEnemyAI : MonoBehaviour
         if (player == null) return;
 
         // Track Player Velocity (if moving) for Predictive Search
-        if (playerRb != null && playerRb.linearVelocity.sqrMagnitude > 0.1f)
+        // CRITICAL: Only update if we can SEE the player! Otherwise it's cheating/omniscient.
+        if (playerRb != null && playerRb.linearVelocity.sqrMagnitude > 0.1f && HasLineOfSightToPlayer(false))
         {
             lastKnownPlayerVelocity = playerRb.linearVelocity;
         }
@@ -449,8 +459,11 @@ public abstract class BaseEnemyAI : MonoBehaviour
         // 2. WALL OBSTACLE CHECK
         float distToPlayer = Vector2.Distance(transform.position, player.position);
         
-        // Use visionBlockingLayer if set, otherwise fallback to just "Wall" layer
-        LayerMask losLayer = visionBlockingLayer.value != 0 ? visionBlockingLayer : LayerMask.GetMask("Wall");
+        // Use visionBlockingLayer if set, otherwise fallback to "Default" + "Wall" + "Obstacle"
+        // Most project walls are on Default, so checking only "Wall" causes X-Ray vision!
+        LayerMask losLayer = visionBlockingLayer.value != 0 ? 
+                             visionBlockingLayer : 
+                             LayerMask.GetMask("Default", "Wall", "Obstacle");
         
         RaycastHit2D hit = Physics2D.Raycast(transform.position, dirToPlayer, distToPlayer, losLayer);
         
@@ -508,6 +521,27 @@ public abstract class BaseEnemyAI : MonoBehaviour
                 CombatManager.Instance.RegisterAwareEnemy(gameObject);
         }
         
+        // Set Speed based on State (Scale MaxSpeed)
+        float baseSpeed = movementController.InitialMaxSpeed; // Assuming InitialMaxSpeed exists or we use 3.5f default
+        // Safety: If InitialMaxSpeed not exposed, use hardcoded base
+        if (baseSpeed <= 0) baseSpeed = 3.5f;
+
+        switch (state)
+        {
+            case AIState.Patrol:
+            case AIState.Search: // Search is cautious (Walk)
+            case AIState.PatrolIdle:
+                movementController.SetMaxSpeed(baseSpeed * 0.5f); // Walk Speed (50%)
+                break;
+            case AIState.Hesitate:
+            case AIState.Stun:
+                movementController.SetMaxSpeed(0f);
+                break;
+            default:
+                movementController.SetMaxSpeed(baseSpeed); // Run Speed (100%)
+                break;
+        }
+
         switch (state)
         {
             case AIState.Patrol:
@@ -556,6 +590,13 @@ public abstract class BaseEnemyAI : MonoBehaviour
                 
             case AIState.Flee:
                 movementController.SetFleeMode(player);
+                break;
+             
+             case AIState.Search:
+                // Special handling for Search state (transition from Chase)
+                // Logic handled in UpdateState, but ensure mode is set correctly here
+                // Note: HandleSearchState handles the specific movement (Chase vs Patrol destination)
+                // But we set base speed here.
                 break;
         }
     }

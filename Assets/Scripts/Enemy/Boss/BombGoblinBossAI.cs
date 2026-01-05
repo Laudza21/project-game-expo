@@ -795,11 +795,41 @@ public class BombGoblinBossAI : BaseEnemyAI
     #region Override Base Methods
     protected override void HandleChaseState(float distanceToPlayer)
     {
-        // Update last known position
-        lastKnownPlayerPosition = player.position;
-        
-        // Use pathfinding to chase player
-        movementController.SetChaseMode(player);
+        // Update last known position correctly (similar to other AI)
+        bool canSeePlayer = HasLineOfSightToPlayer(false);
+        if (canSeePlayer)
+        {
+            lastKnownPlayerPosition = player.position;
+            // Boss rarely loses memory, but good to track
+            chaseMemoryEndTime = Time.time + chaseMemoryDuration;
+        }
+        else if (Time.time <= chaseMemoryEndTime)
+        {
+             // FIX: If hidden, move to lastKnownPosition + OVERSHOOT (0.7m)
+             Vector3 chaseTarget = lastKnownPlayerPosition;
+             if (lastKnownPlayerVelocity.sqrMagnitude > 0.1f)
+             {
+                 chaseTarget += (Vector3)lastKnownPlayerVelocity.normalized * 0.7f;
+             }
+             
+             movementController.SetChaseDestination(chaseTarget);
+             
+             // Check distance to OVERSHOOT position
+             float distToTarget = Vector2.Distance(transform.position, chaseTarget);
+             if (distToTarget < 0.6f)
+             {
+                 // Boss reached the corner!
+                 // Unlike minions, Boss might not "Search" (Walk), but should stop chasing blindly.
+                 // Let's make him look around or throw a bomb.
+                 // For consistency, we switch to Pacing or Search.
+                 ChangeState(AIState.Search); 
+             }
+        }
+        else
+        {
+             // Use pathfinding to chase player (default fallback)
+             movementController.SetChaseMode(player);
+        }
         
         // Check if player escaped
         if (distanceToPlayer > loseTargetRange && !HasLineOfSightToPlayer(false))
