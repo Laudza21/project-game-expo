@@ -277,7 +277,6 @@ public class EnemyMovementController : MonoBehaviour
                     if (distToWaypoint < 0.5f)
                     {
                         currentPathIndex++;
-                        Debug.Log($"[{gameObject.name}] Reached waypoint {currentPathIndex}/{currentPath.Count}");
                         
                         // Check next waypoint immediately
                         if (currentPathIndex < currentPath.Count)
@@ -517,6 +516,12 @@ public class EnemyMovementController : MonoBehaviour
 
         DisableAllMovement();
         
+        // IMPORTANT: Restore full speed for chase (in case it was reduced)
+        if (steeringManager != null && InitialMaxSpeed > 0)
+        {
+            steeringManager.MaxSpeed = InitialMaxSpeed; // Full speed (100%)
+        }
+        
         if (Pathfinding.PathfindingManager.Instance != null)
         {
             isPathfinding = true;
@@ -555,16 +560,6 @@ public class EnemyMovementController : MonoBehaviour
         {
             currentPath = Pathfinding.PathfindingManager.Instance.FindPath(transform.position, targetPos);
             currentPathIndex = 0;
-            
-            // DEBUG: Log path calculation
-            if (currentPath == null || currentPath.Count == 0)
-            {
-                Debug.LogWarning($"[{gameObject.name}] Path is NULL or EMPTY! From {transform.position} to {targetPos}");
-            }
-            else
-            {
-                Debug.Log($"[{gameObject.name}] Path calculated: {currentPath.Count} waypoints");
-            }
         }
     }
     
@@ -899,6 +894,8 @@ public class EnemyMovementController : MonoBehaviour
     
     private void OnDrawGizmosSelected()
     {
+        // Gizmos disabled for performance
+        /*
         if (currentPath != null && currentPath.Count > 0)
         {
             // Draw full path in yellow
@@ -935,5 +932,6 @@ public class EnemyMovementController : MonoBehaviour
                 }
             }
         }
+        */
     }
 }

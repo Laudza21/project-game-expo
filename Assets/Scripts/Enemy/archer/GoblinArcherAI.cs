@@ -130,7 +130,7 @@ public class GoblinArcherAI : BaseEnemyAI
                 
                 // Check distance to OVERSHOOT position
                 float distToTarget = Vector2.Distance(transform.position, chaseTarget);
-                if (distToTarget < 0.6f)
+                if (distToTarget < 1.5f) // Looser threshold for pathfinding (was 0.6f)
                 {
                     // Reached the OVERSHOOT spot!
                     // Trigger Search!

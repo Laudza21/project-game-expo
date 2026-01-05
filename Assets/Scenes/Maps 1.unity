@@ -1176,7 +1176,7 @@ Transform:
   m_GameObject: {fileID: 519420028}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 8.586131, y: -0.6379702, z: -9.5}
+  m_LocalPosition: {x: 45.786198, y: 31.962029, z: -9.5}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -1327,7 +1327,7 @@ Transform:
   m_GameObject: {fileID: 524090559}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 8.586131, y: -0.6379702, z: -9.5}
+  m_LocalPosition: {x: 45.786198, y: 31.962029, z: -9.5}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -15493,7 +15493,7 @@ GameObject:
   - component: {fileID: 859561283}
   m_Layer: 10
   m_Name: Chest common
-  m_TagString: Untagged
+  m_TagString: Interactable
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
@@ -15718,7 +15718,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 0
+  m_IsActive: 1
 --- !u!114 &893649436
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -16012,7 +16012,7 @@ Transform:
   m_GameObject: {fileID: 893649435}
   serializedVersion: 2
   m_LocalRotation: {x: -0.03748527, y: -0, z: -0, w: 0.99929726}
-  m_LocalPosition: {x: 3.42, y: -30.05, z: 0}
+  m_LocalPosition: {x: 39.52, y: 3.99, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -17106,7 +17106,7 @@ MonoBehaviour:
       m_Bits: 4096
     radiusMultiplier: 0.1
     collisionOffset: {x: 0, y: 0}
-  displayGridGizmos: 1
+  displayGridGizmos: 0
   gizmoGap: 0.122
   gridOffset: {x: 0, y: 0}
   onlyDisplayUnwalkableGizmos: 0
@@ -17445,7 +17445,7 @@ Transform:
   m_GameObject: {fileID: 1358276323}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 2.3, y: -33.3, z: 0}
+  m_LocalPosition: {x: 39.5, y: -0.7, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -17696,7 +17696,7 @@ GameObject:
   - component: {fileID: 1379860292}
   m_Layer: 10
   m_Name: chest_Epic
-  m_TagString: Untagged
+  m_TagString: Interactable
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
@@ -47140,11 +47140,11 @@ PrefabInstance:
     m_Modifications:
     - target: {fileID: 79626618245786944, guid: 892c2a6755735d0448fa4a92016a4c5c, type: 3}
       propertyPath: m_LocalPosition.x
-      value: 2.97
+      value: 39.52
       objectReference: {fileID: 0}
     - target: {fileID: 79626618245786944, guid: 892c2a6755735d0448fa4a92016a4c5c, type: 3}
       propertyPath: m_LocalPosition.y
-      value: -31.04
+      value: 3.67
       objectReference: {fileID: 0}
     - target: {fileID: 79626618245786944, guid: 892c2a6755735d0448fa4a92016a4c5c, type: 3}
       propertyPath: m_LocalPosition.z
@@ -47184,16 +47184,12 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 2005658258143342274, guid: 892c2a6755735d0448fa4a92016a4c5c, type: 3}
       propertyPath: m_IsActive
-      value: 1
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 2799262858623429359, guid: 892c2a6755735d0448fa4a92016a4c5c, type: 3}
       propertyPath: player
       value: 
       objectReference: {fileID: 1358276327}
-    - target: {fileID: 2799262858623429359, guid: 892c2a6755735d0448fa4a92016a4c5c, type: 3}
-      propertyPath: visionBlockingLayer.m_Bits
-      value: 5376
-      objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects: []

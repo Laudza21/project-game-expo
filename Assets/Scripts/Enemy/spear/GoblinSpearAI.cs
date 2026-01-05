@@ -330,7 +330,7 @@ public class GoblinSpearAI : BaseEnemyAI
                 
                 // Check distance to OVERSHOOT position (not just corner)
                 float distToTarget = Vector2.Distance(transform.position, chaseTarget);
-                if (distToTarget < 0.6f) // Keep tight threshold
+                if (distToTarget < 1.5f) // Looser threshold for pathfinding (was 0.6f)
                 {
                     // Reached the OVERSHOOT spot! Now we are past the wall.
                     // Trigger Search!
