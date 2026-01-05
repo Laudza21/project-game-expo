@@ -107,7 +107,7 @@ public class GoblinSpearAI : BaseEnemyAI
     
     [Header("Aggression Probability Shift")]
     [Tooltip("Base chance untuk attack (vs tactical)")]
-    [SerializeField] private float baseAggressionChance = 0.4f; // Original value restored
+    [SerializeField] private float baseAggressionChance = 0.2f; // Reduced from 0.4f -> More tactical/patient
     [Tooltip("Increase aggression chance per consecutive tactical move")]
     [SerializeField] private float aggressionIncreasePerTactical = 0.2f;
     [Tooltip("Max aggression chance cap")]
@@ -380,14 +380,24 @@ public class GoblinSpearAI : BaseEnemyAI
                 if (isRushingToAttack)
                 {
                     LogDebug("In range (Rushing) but no token - Waiting aggressively", "orange");
-                    // Stay in Chase/Surround behavior (don't switch state)
-                    movementController.StopMoving(); // Wait in place ready to strike
+                    
+                    // FIX: Jangan StopMoving()! Blocking teman.
+                    // Ganti dengan CircleStrafe radius dekat (Active Waiting) atau Slot Approach
+                    if (colliderDist < attackRange + 0.5f)
+                    {
+                        movementController.SetCircleStrafeMode(player, attackRange + 1.0f); // Strafe close
+                    }
+                    else
+                    {
+                        // Sedikit mundur ke slot biar ga numpuk
+                        movementController.SetSlotApproachMode(player, engagementRange);
+                    }
                     return;
                 }
                 
-                // Normal tactical fallback
+                // Normal tactical fallback (Wait your turn in slot)
                 LogDebug("In range but no attack token - going tactical", "yellow");
-                DecideTacticalApproach();
+                ChangeState(AIState.BlindSpotSeek); // Go circle strafe/wait in slot
                 return;
             }
         }

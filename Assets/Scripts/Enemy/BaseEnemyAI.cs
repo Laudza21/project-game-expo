@@ -653,6 +653,32 @@ public abstract class BaseEnemyAI : MonoBehaviour
 
     protected void UpdateAreaPatrol()
     {
+        // VALIDATION: Ensure target is walkable before pathfinding
+        // If target is inside a wall/obstacle, generate a new one.
+        if (Pathfinding.PathfindingManager.Instance != null)
+        {
+            var grid = Pathfinding.PathfindingManager.Instance.GetGrid();
+            if (grid != null)
+            {
+                var node = grid.NodeFromWorldPoint(currentZoneTarget);
+                if (node == null || !node.walkable)
+                {
+                    // Target is invalid! Generate a new walkable point.
+                    // Try up to 5 times to find a valid point.
+                    for (int attempt = 0; attempt < 5; attempt++)
+                    {
+                        Vector3 newTarget = patrolZone.GetRandomPointInZone();
+                        var newNode = grid.NodeFromWorldPoint(newTarget);
+                        if (newNode != null && newNode.walkable)
+                        {
+                            currentZoneTarget = newTarget;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        
         if (movementController != null)
         {
             // Use pathfinding for patrol

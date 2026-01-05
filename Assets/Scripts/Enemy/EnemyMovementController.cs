@@ -44,7 +44,7 @@ public class EnemyMovementController : MonoBehaviour
     private List<Vector3> currentPath;
     private int currentPathIndex;
     private float pathUpdateTimer;
-    private const float PATH_UPDATE_RATE = 0.15f; // Faster updates for responsive chase
+    private const float PATH_UPDATE_RATE = 0.3f; // Slower updates to allow following full path (was 0.1f)
     private bool isPathfinding;
     private Transform pathfindingTarget;
     
@@ -267,11 +267,30 @@ public class EnemyMovementController : MonoBehaviour
             // Follow path
             if (currentPath != null && currentPath.Count > 0)
             {
-                // Check if reached current waypoint
-                // Tweaked: 0.4f (from 1.0f) to prevent corner cutting into walls!
-                if (currentPathIndex < currentPath.Count && Vector2.Distance(transform.position, currentPath[currentPathIndex]) < 0.4f)
+                // Skip waypoints that are too close (aggressive waypoint skipping)
+                // This prevents enemy from stopping at every tiny waypoint
+                while (currentPathIndex < currentPath.Count)
                 {
-                    currentPathIndex++;
+                    float distToWaypoint = Vector2.Distance(transform.position, currentPath[currentPathIndex]);
+                    
+                    // Reached waypoint? Move to next one
+                    if (distToWaypoint < 0.5f)
+                    {
+                        currentPathIndex++;
+                        Debug.Log($"[{gameObject.name}] Reached waypoint {currentPathIndex}/{currentPath.Count}");
+                        
+                        // Check next waypoint immediately
+                        if (currentPathIndex < currentPath.Count)
+                        {
+                            float distToNext = Vector2.Distance(transform.position, currentPath[currentPathIndex]);
+                            // If next waypoint is very close (< 1.5m), skip it too
+                            if (distToNext < 1.5f && currentPathIndex < currentPath.Count - 1)
+                            {
+                                continue; // Skip to next waypoint
+                            }
+                        }
+                    }
+                    break; // Found valid waypoint to follow
                 }
                 
                 // If valid waypoint remains, seek it
@@ -492,6 +511,7 @@ public class EnemyMovementController : MonoBehaviour
         // This prevents resetting the path every frame
         if (isPathfinding && pathfindingTarget == target && !fleeBehaviour.IsEnabled)
         {
+            // Already chasing this target - let the timer handle path updates
             return;
         }
 
@@ -503,6 +523,9 @@ public class EnemyMovementController : MonoBehaviour
             pathfindingMode = PathfindingMode.Chase;
             pathfindingTarget = target;
             pathfindingDestination = null;
+            
+            // Reset path update timer to force immediate recalculation
+            pathUpdateTimer = 0f;
             
             // IMPORTANT: During pathfinding, SeekBehaviour follows WAYPOINTS, not the player!
             // The waypoint position is set by UpdateDesiredDirection() every frame.
@@ -532,6 +555,16 @@ public class EnemyMovementController : MonoBehaviour
         {
             currentPath = Pathfinding.PathfindingManager.Instance.FindPath(transform.position, targetPos);
             currentPathIndex = 0;
+            
+            // DEBUG: Log path calculation
+            if (currentPath == null || currentPath.Count == 0)
+            {
+                Debug.LogWarning($"[{gameObject.name}] Path is NULL or EMPTY! From {transform.position} to {targetPos}");
+            }
+            else
+            {
+                Debug.Log($"[{gameObject.name}] Path calculated: {currentPath.Count} waypoints");
+            }
         }
     }
     
@@ -556,61 +589,69 @@ public class EnemyMovementController : MonoBehaviour
                 return;
             }
             
-            if (slotPos.HasValue && distToPlayer > slotApproachDistance)
+            if (slotPos.HasValue)
             {
-                // Jauh dari player: bergerak ke arah SLOT POSITION, bukan player!
-                
-                // Check dan cache noise HANYA saat slot berubah
-                int currentSlot = CombatManager.Instance.GetEnemySlot(gameObject);
-                if (currentSlot != lastAssignedSlot)
+                if (distToPlayer > slotApproachDistance)
                 {
-                    lastAssignedSlot = currentSlot;
-                    cachedApproachNoise = Random.Range(-10f, 10f); // Generate sekali saja
-                }
-                
-                // Hitung posisi antara slot dan player dengan CACHED noise
-                Vector2 slotDirection = (slotPos.Value - (Vector2)target.position).normalized;
-                slotDirection = Quaternion.Euler(0, 0, cachedApproachNoise) * slotDirection;
-                
-                Vector2 approachPoint = (Vector2)target.position + slotDirection * slotApproachDistance;
-                
-                // Create temp transform if needed
-                if (slotApproachTarget == null)
-                {
-                    GameObject tempGO = new GameObject("ApproachPoint_" + gameObject.name);
-                    slotApproachTarget = tempGO.transform;
-                }
-                slotApproachTarget.position = approachPoint;
-                
-                // Calculate distance to approach point
-                float distToApproachPoint = Vector2.Distance(transform.position, approachPoint);
-                
-                // Jika enemy lebih dekat ke approach point, langsung ke player
-                if (distToApproachPoint < 1.5f)
-                {
-                    SetChaseMode(target);
+                    // Jauh dari player: bergerak ke arah SLOT POSITION, bukan player!
+                    
+                    // Check dan cache noise HANYA saat slot berubah
+                    int currentSlot = CombatManager.Instance.GetEnemySlot(gameObject);
+                    if (currentSlot != lastAssignedSlot)
+                    {
+                        lastAssignedSlot = currentSlot;
+                        cachedApproachNoise = Random.Range(-10f, 10f); // Generate sekali saja
+                    }
+                    
+                    // Hitung posisi antara slot dan player dengan CACHED noise
+                    Vector2 slotDirection = (slotPos.Value - (Vector2)target.position).normalized;
+                    slotDirection = Quaternion.Euler(0, 0, cachedApproachNoise) * slotDirection;
+                    
+                    Vector2 approachPoint = (Vector2)target.position + slotDirection * slotApproachDistance;
+                    
+                    // Create temp transform if needed
+                    if (slotApproachTarget == null)
+                    {
+                        GameObject tempGO = new GameObject("ApproachPoint_" + gameObject.name);
+                        slotApproachTarget = tempGO.transform;
+                    }
+                    slotApproachTarget.position = approachPoint;
+                    
+                    // Calculate distance to approach point
+                    float distToApproachPoint = Vector2.Distance(transform.position, approachPoint);
+                    
+                    // Jika enemy lebih dekat ke approach point, langsung ke player
+                    if (distToApproachPoint < 1.5f)
+                    {
+                        SetChaseMode(target);
+                    }
+                    else
+                    {
+                        SetChaseMode(slotApproachTarget);
+                    }
+
+                    // Set Player as explicit avoidance target to prevent walking into them while flanking
+                    // (Re-apply this because SetChaseMode clears it)
+                     separationBehaviour.ExtraRepulsionTarget = target;
                 }
                 else
                 {
-                    SetChaseMode(slotApproachTarget);
+                    // Dekat player: chase langsung
+                    SetChaseMode(target);
+                    // DO NOT set ExtraRepulsionTarget here! We want to touch/attack the player!
                 }
-
-                // Set Player as explicit avoidance target to prevent walking into them while flanking
-                // (Re-apply this because SetChaseMode clears it)
-                 separationBehaviour.ExtraRepulsionTarget = target;
             }
             else
             {
-                // Dekat player: chase langsung
-                SetChaseMode(target);
-                // DO NOT set ExtraRepulsionTarget here! We want to touch/attack the player!
+                // Fallback: Jika CombatManager ada TAPI slot null (artinya penuh/terhalang)
+                // Gunakan CircleStrafe dengan radius LEBIH JAUH (Reserve Layer)
+                // supaya pending di belakang teman yang sedang fight.
+                SetCircleStrafeMode(target, slotApproachDistance + 2.5f);
             }
-            
-            // REMOVED: separationBehaviour.ExtraRepulsionTarget = target; (Was causing the bug)
         }
         else
         {
-            // Fallback: chase biasa
+            // Fallback: Chase biasa jika tidak ada CombatManager
             SetChaseMode(target);
         }
         
@@ -652,6 +693,8 @@ public class EnemyMovementController : MonoBehaviour
         separationBehaviour.IsEnabled = true;
     }
 
+
+
     public void SetCircleStrafeMode(Transform target, float? customRadius = null)
     {
         DisableAllMovement();
@@ -680,6 +723,12 @@ public class EnemyMovementController : MonoBehaviour
         }
             
         separationBehaviour.IsEnabled = true;
+        
+        // CRITICAL: Enable obstacle avoidance so enemy doesn't strafe INTO walls/chests!
+        if (avoidObstacleBehaviour != null)
+        {
+            avoidObstacleBehaviour.IsEnabled = true;
+        }
     }
 
     public void ReverseStrafeDirection()
@@ -779,6 +828,10 @@ public class EnemyMovementController : MonoBehaviour
             DisableAllMovement();
             formationSeekBehaviour.IsEnabled = true;
             separationBehaviour.IsEnabled = true;
+            
+            // Enable obstacle avoidance during surround/formation movement
+            if (avoidObstacleBehaviour != null)
+                avoidObstacleBehaviour.IsEnabled = true;
         }
         else
         {
@@ -846,12 +899,31 @@ public class EnemyMovementController : MonoBehaviour
     
     private void OnDrawGizmosSelected()
     {
-        if (currentPath != null)
+        if (currentPath != null && currentPath.Count > 0)
         {
-            Gizmos.color = Color.black;
+            // Draw full path in yellow
+            Gizmos.color = Color.yellow;
+            for (int i = 0; i < currentPath.Count - 1; i++)
+            {
+                Gizmos.DrawLine(currentPath[i], currentPath[i + 1]);
+            }
+            
+            // Draw waypoints
             for (int i = currentPathIndex; i < currentPath.Count; i++)
             {
-                Gizmos.DrawCube(currentPath[i], Vector3.one * 0.2f);
+                // Current waypoint in GREEN (big)
+                if (i == currentPathIndex)
+                {
+                    Gizmos.color = Color.green;
+                    Gizmos.DrawCube(currentPath[i], Vector3.one * 0.5f);
+                    Gizmos.DrawLine(transform.position, currentPath[i]);
+                }
+                else
+                {
+                    // Remaining waypoints in black (small)
+                    Gizmos.color = Color.black;
+                    Gizmos.DrawCube(currentPath[i], Vector3.one * 0.2f);
+                }
 
                 if (i == currentPathIndex)
                 {

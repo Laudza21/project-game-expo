@@ -112,6 +112,32 @@ namespace Pathfinding
                         }
 
                         int newMovementCostToNeighbour = GetGCost(currentNode) + GetDistance(currentNode, neighbour);
+                        
+                        // PENALTY: Prefer nodes that are farther from obstacles
+                        // This makes paths prefer "center of walkable area" instead of hugging walls
+                        // EXCEPTION: Don't penalize start/end nodes (enemy/player might spawn near walls)
+                        int obstaclePenalty = 0;
+                        if (neighbour != startNode && neighbour != targetNode)
+                        {
+                            int unwalkableNeighbours = 0;
+                            foreach (Node n in grid.GetNeighbours(neighbour))
+                            {
+                                if (!n.walkable)
+                                    unwalkableNeighbours++;
+                            }
+                            
+                            // If this node has many unwalkable neighbours, it's near a wall
+                            // Add penalty to discourage using it (unless necessary)
+                            if (unwalkableNeighbours >= 3)
+                                obstaclePenalty = 30; // High penalty for nodes very close to walls
+                            else if (unwalkableNeighbours >= 2)
+                                obstaclePenalty = 15; // Medium penalty
+                            else if (unwalkableNeighbours >= 1)
+                                obstaclePenalty = 5; // Small penalty
+                        }
+                        
+                        newMovementCostToNeighbour += obstaclePenalty;
+                        
                         if (newMovementCostToNeighbour < GetGCost(neighbour) || !openSet.Contains(neighbour))
                         {
                             gCost[neighbour] = newMovementCostToNeighbour;
