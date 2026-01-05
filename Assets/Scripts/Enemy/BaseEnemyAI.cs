@@ -71,14 +71,14 @@ public abstract class BaseEnemyAI : MonoBehaviour
     
     // Chase Memory & Search Variables (Last Known Position System)
     protected Vector3 lastKnownPlayerPosition;
-    protected Vector2 lastKnownPlayerVelocity; // NEW: Track movement for prediction
+    protected Vector2 lastKnownPlayerVelocity; // Track player movement for predictive search
     protected float chaseMemoryEndTime;
     protected float searchEndTime;
     [Header("Chase Memory Settings")]
     [Tooltip("How long enemy 'remembers' player after losing sight")]
-    [SerializeField] protected float chaseMemoryDuration = 38f; // Updated to 38s as requested
-    [Tooltip("How long enemy uses search behavior after losing target")]
-    [SerializeField] protected float searchDuration = 10f; // Increased search time
+    [SerializeField] protected float chaseMemoryDuration = 10f;
+    [Tooltip("How long enemy searches at last known position")]
+    [SerializeField] protected float searchDuration = 3f;
     
     // Area Patrol Variables
     public Vector3 currentZoneTarget;
@@ -104,9 +104,6 @@ public abstract class BaseEnemyAI : MonoBehaviour
         BlindSpotSeek,  // Circle strafe mencari blind spot player
         Feint           // Tipuan maju-mundur
     }
-
-    // Cached References
-    protected Rigidbody2D playerRb;
 
     protected virtual void Awake()
     {
@@ -134,8 +131,6 @@ public abstract class BaseEnemyAI : MonoBehaviour
         if (player != null)
         {
             playerBodyCollider = GetBodyCollider(player);
-            // Cache Player RB for velocity tracking
-            if (playerRb == null) playerRb = player.GetComponent<Rigidbody2D>();
         }
         
         // DEBUG: Verify correct colliders were found
@@ -241,12 +236,9 @@ public abstract class BaseEnemyAI : MonoBehaviour
         if (player == null) return;
 
         // Track Player Velocity (if moving) for Predictive Search
-        if (playerRb != null)
+        if (playerRb != null && playerRb.linearVelocity.sqrMagnitude > 0.1f)
         {
-            if (playerRb.linearVelocity.sqrMagnitude > 0.1f)
-            {
-                lastKnownPlayerVelocity = playerRb.linearVelocity;
-            }
+            lastKnownPlayerVelocity = playerRb.linearVelocity;
         }
 
         if (isUsingAreaPatrol && currentState == AIState.Patrol)

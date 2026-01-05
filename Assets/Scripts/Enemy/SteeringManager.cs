@@ -39,11 +39,10 @@ public class SteeringManager : MonoBehaviour
             rb.sleepMode = RigidbodySleepMode2D.StartAwake;
         }
 
-        // Safety: Auto-assign collision mask if forgotten
-        if (collisionMask.value == 0)
+        // Safety: Auto-assign collision mask if forgotten OR ensure Wall is always included
         {
             // PRO TRY: Get mask from PathfindingManager if available
-            if (Pathfinding.PathfindingManager.Instance != null)
+            if (collisionMask.value == 0 && Pathfinding.PathfindingManager.Instance != null)
             {
                 var grid = Pathfinding.PathfindingManager.Instance.GetGrid();
                 if (grid != null)
@@ -53,11 +52,19 @@ public class SteeringManager : MonoBehaviour
                 }
             }
 
+            // ALWAYS ensure Wall layer is included (critical fix!)
+            int wallLayerMask = LayerMask.GetMask("Wall");
+            if (wallLayerMask != 0 && (collisionMask.value & wallLayerMask) == 0)
+            {
+                collisionMask |= wallLayerMask;
+                Debug.Log($"[{gameObject.name}] SteeringManager: Added 'Wall' layer to Collision Mask. New value: {collisionMask.value}");
+            }
+
             // Fallback if still empty
             if (collisionMask.value == 0)
             {
-                Debug.LogWarning($"[{gameObject.name}] SteeringManager: Collision Mask empty! Defaulting to 'Default' + 'Obstacle'.");
-                collisionMask = LayerMask.GetMask("Default", "Obstacle", "Wall", "Environment"); // Try common names
+                Debug.LogWarning($"[{gameObject.name}] SteeringManager: Collision Mask empty! Defaulting to common obstacle layers.");
+                collisionMask = LayerMask.GetMask("Default", "Obstacle", "Wall", "Environment", "Batu"); // Try common names
                 if (collisionMask.value == 0) collisionMask = 1; // Last resort: Default layer
             }
         }
