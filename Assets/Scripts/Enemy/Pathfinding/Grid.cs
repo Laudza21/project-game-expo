@@ -10,6 +10,8 @@ namespace Pathfinding
         public float nodeRadius;
         [Range(0.1f, 1f)]
         public float collisionCheckRadiusMultiplier = 0.9f; // Global multiplier
+        [Tooltip("Extra buffer radius to prevent wall hugging (e.g. 0.2)")]
+        public float extraCollisionPadding = 0.2f; // Default small padding
 
         [System.Serializable]
         public struct LayerRadiusOverride
@@ -79,28 +81,19 @@ namespace Pathfinding
                     
                     // 1. Check Physics Layers (Global)
                     bool walkable = true;
-                    float checkRadius = nodeRadius * collisionCheckRadiusMultiplier;
+                    // Add extra padding to the check radius to create a buffer zone
+                    float baseCheckRadius = nodeRadius * collisionCheckRadiusMultiplier;
+                    float checkRadius = baseCheckRadius + extraCollisionPadding;
                     
                     if (Physics2D.OverlapCircle(worldPoint, checkRadius, unwalkableMask))
                     {
                         walkable = false;
                     }
                     
-                    // 2. Check Overrides (if any specific layer needs different radius)
-                    // Only check if it's currently considered unwalkable (to potentially make it walkable? No, usually to make it unwalkable with smaller radius)
-                    // Actually, let's reset walkable to true and check everything with specific radii
-                    
-                    // Refined Logic:
-                    // If layerOverrides are defined, we check them specifically.
-                    
+                    // 2. Check Overrides
                     if (layerOverrides != null && layerOverrides.Count > 0)
                     {
-                        // Check global mask first loosely? Or strictly?
-                        // Let's do this: 
-                        // If it hits the global mask with the global multiplier -> Unwalkable
-                        // BUT, if the hit object is in an override layer, we re-evaluate with the override radius.
-                        
-                        Collider2D hit = Physics2D.OverlapCircle(worldPoint, nodeRadius, unwalkableMask); // Check full size first
+                        Collider2D hit = Physics2D.OverlapCircle(worldPoint, nodeRadius, unwalkableMask); 
                         if (hit != null)
                         {
                             bool foundOverride = false;
@@ -108,19 +101,19 @@ namespace Pathfinding
                             {
                                 if (((1 << hit.gameObject.layer) & overlay.layer) != 0)
                                 {
-                                    // It matches an override layer! Check with specific radius
                                     foundOverride = true;
                                     float overrideRadius = nodeRadius * overlay.radiusMultiplier;
-                                    // Apply per-layer offset
+                                    // Also apply padding to overrides? Usually yes for consistency.
+                                    float finalOverrideRadius = overrideRadius + extraCollisionPadding;
+                                    
                                     Vector3 checkPos = worldPoint + (Vector3)overlay.collisionOffset;
                                     
-                                    if (Physics2D.OverlapCircle(checkPos, overrideRadius, overlay.layer))
+                                    if (Physics2D.OverlapCircle(checkPos, finalOverrideRadius, overlay.layer))
                                     {
                                         walkable = false;
                                     }
                                     else
                                     {
-                                        // Hit the object with big radius, but MISSED with small radius -> Walkable!
                                         walkable = true; 
                                     }
                                     break;
@@ -129,16 +122,16 @@ namespace Pathfinding
                             
                             if (!foundOverride)
                             {
-                                // No override for this object's layer, use global multiplier
-                                if (Physics2D.OverlapCircle(worldPoint, nodeRadius * collisionCheckRadiusMultiplier, unwalkableMask))
+                                // No override, check again with padding
+                                if (Physics2D.OverlapCircle(worldPoint, checkRadius, unwalkableMask))
                                      walkable = false;
                             }
                         }
                     }
                     else
                     {
-                        // Standard check (No overrides defined)
-                        if (Physics2D.OverlapCircle(worldPoint, nodeRadius * collisionCheckRadiusMultiplier, unwalkableMask))
+                        // Standard check
+                        if (Physics2D.OverlapCircle(worldPoint, checkRadius, unwalkableMask))
                             walkable = false;
                     }
 

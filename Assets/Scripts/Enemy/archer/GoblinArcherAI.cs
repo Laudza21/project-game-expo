@@ -42,6 +42,11 @@ public class GoblinArcherAI : BaseEnemyAI
     private float lastDesperateShotTime = -999f; // Cooldown tracker
     private float continuousKiteStartTime = -999f; // Track kapan mulai kiting
     private bool isKiting = false;
+    
+    // Search State Variables
+    private bool isSearchingArea;
+    private bool hasCheckedPredictedPosition; // NEW: Flag
+    private float nextSearchMoveTime;
 
     protected override void Start()
     {
@@ -68,10 +73,57 @@ public class GoblinArcherAI : BaseEnemyAI
         // if (enableDebugLogs) Debug.Log($"[{gameObject.name}] Archer Init: KiteDist={kitingDistance:F1} | ShootInterval={shootingInterval:F1}");
     }
 
+    protected override void EnterState(AIState state)
+    {
+        base.EnterState(state);
+
+        if (state == AIState.Search)
+        {
+            searchEndTime = Time.time + searchDuration;
+            isSearchingArea = false;
+            hasCheckedPredictedPosition = false;
+            nextSearchMoveTime = 0f;
+        }
+        else if (state == AIState.Chase)
+        {
+            // Init memory to prevent instant expire if LOS is lost immediately
+            chaseMemoryEndTime = Time.time + chaseMemoryDuration;
+        }
+    }
+
     protected override void HandleChaseState(float distanceToPlayer)
     {
-        // 1. Cek jika target hilang
-        if (distanceToPlayer > loseTargetRange)
+        // === CHASE MEMORY SYSTEM (Hybrid) ===
+        bool canSeePlayer = HasLineOfSightToPlayer(false);
+        
+        if (canSeePlayer)
+        {
+            lastKnownPlayerPosition = player.position;
+            chaseMemoryEndTime = Time.time + chaseMemoryDuration;
+        }
+        else
+        {
+            // Player lost! Check memory.
+            if (Time.time > chaseMemoryEndTime)
+            {
+                // Memory expired! Lost completely.
+                corneredTimer = 0f;
+                // Debug.Log($"[{gameObject.name}] Lost target! Memory expired. Searching...");
+                ChangeState(AIState.Search);
+                return;
+            }
+            else
+            {
+                // Memory Active: Keep chasing Real Position!
+                // Ignore kiting tactics until we see the player again
+                // This ensures we pathfind around walls instead of trying to kite through them
+                if (movementController != null) movementController.SetChaseMode(player);
+                return; // SKIP logic kiting & shooting!
+            }
+        }
+
+        // 1. Cek jika target hilang SANGAT JAUH (Safety break)
+        if (distanceToPlayer > loseTargetRange * 1.5f && !canSeePlayer && Time.time > chaseMemoryEndTime)
         {
             corneredTimer = 0f;
             ChangeState(AIState.Patrol);
@@ -210,6 +262,74 @@ public class GoblinArcherAI : BaseEnemyAI
                     StartCoroutine(ShootRoutine());
                 }
                 break;
+
+            case AIState.Search:
+                HandleSearchState(distanceToPlayer);
+                break;
+        }
+    }
+
+    private void HandleSearchState(float distanceToPlayer)
+    {
+        // If player visible again, resume chase!
+        if (distanceToPlayer <= detectionRange && HasLineOfSightToPlayer(false))
+        {
+            ChangeState(AIState.Chase);
+            return;
+        }
+
+        // PHASE 1: Go to last known position (Run)
+        if (!isSearchingArea)
+        {
+            float distToLastKnown = Vector2.Distance(transform.position, lastKnownPlayerPosition);
+            
+            if (distToLastKnown > 1.5f)
+            {
+                // Still moving to position - Run!
+                movementController.SetChaseDestination(lastKnownPlayerPosition);
+            }
+            else
+            {
+                // Reached position! Start investigating area (Walk)
+                isSearchingArea = true;
+                nextSearchMoveTime = Time.time + 0.5f; // Pause briefly
+                movementController.StopMoving();
+            }
+        }
+        // PHASE 2: Wander around (Predictive -> Random)
+        else
+        {
+            if (Time.time >= nextSearchMoveTime)
+            {
+                Vector3 searchPoint;
+                
+                // TRY 1: Prediction based on velocity (First move only)
+                if (!hasCheckedPredictedPosition && lastKnownPlayerVelocity.sqrMagnitude > 0.1f)
+                {
+                    // Debug.Log("Archer Search: Predictive path...");
+                    Vector3 predictedOffset = lastKnownPlayerVelocity.normalized * 5.0f; // Check 5m ahead
+                    searchPoint = lastKnownPlayerPosition + predictedOffset;
+                    hasCheckedPredictedPosition = true;
+                }
+                else
+                {
+                    // WHY 2: Random Wander
+                    Vector2 randomOffset = Random.insideUnitCircle * 4.0f; 
+                    searchPoint = lastKnownPlayerPosition + (Vector3)randomOffset;
+                }
+                
+                // Move there using Patrol (Walk) speed
+                movementController.SetPatrolDestination(searchPoint);
+                
+                // Set next move time
+                nextSearchMoveTime = Time.time + Random.Range(2.5f, 4.0f);
+            }
+            
+            // Timeout Check
+            if (Time.time >= searchEndTime)
+            {
+                ChangeState(AIState.Patrol);
+            }
         }
     }
 

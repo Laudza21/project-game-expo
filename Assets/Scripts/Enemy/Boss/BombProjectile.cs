@@ -244,7 +244,7 @@ public class BombProjectile : MonoBehaviour
             AudioSource.PlayClipAtPoint(explosionSound, transform.position);
         }
         
-        Debug.Log($"<color=orange>[BombProjectile]</color> Exploded at {transform.position}");
+        // Debug.Log($"<color=orange>[BombProjectile]</color> Exploded at {transform.position}");
         
         Destroy(gameObject);
     }
@@ -267,7 +267,7 @@ public class BombProjectile : MonoBehaviour
             if (playerHealth != null)
             {
                 playerHealth.TakeDamage(damage);
-                Debug.Log($"<color=red>[BombProjectile] Hit player for {damage} damage!</color>");
+                // Debug.Log($"<color=red>[BombProjectile] Hit player for {damage} damage!</color>");
                 continue;
             }
             

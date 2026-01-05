@@ -44,7 +44,7 @@ public class EnemyMovementController : MonoBehaviour
     private List<Vector3> currentPath;
     private int currentPathIndex;
     private float pathUpdateTimer;
-    private const float PATH_UPDATE_RATE = 0.5f;
+    private const float PATH_UPDATE_RATE = 0.15f; // Faster updates for responsive chase
     private bool isPathfinding;
     private Transform pathfindingTarget;
     
@@ -52,6 +52,8 @@ public class EnemyMovementController : MonoBehaviour
     private enum PathfindingMode { None, Chase, Flee, Patrol }
     private PathfindingMode pathfindingMode = PathfindingMode.None;
     private Vector3? pathfindingDestination; // For flee: the safe point to reach
+    private Vector3 lastPathTargetPosition; // Track where path was calculated TO
+    private const float PATH_RECALC_DISTANCE = 2.5f; // Force recalc if target moved this far
 
     public void Initialize(FormationManager formationManager = null)
     {
@@ -150,6 +152,9 @@ public class EnemyMovementController : MonoBehaviour
                 case PathfindingMode.Chase:
                     if (pathfindingTarget != null)
                         targetPos = pathfindingTarget.position;
+                    // FIX: Support static destination (Memory Chase / Search)
+                    else if (pathfindingDestination.HasValue)
+                        targetPos = pathfindingDestination.Value;
                     else
                     {
                         isPathfinding = false;
@@ -242,10 +247,12 @@ public class EnemyMovementController : MonoBehaviour
                     return;
             }
             
-            // Update path periodically
-            if (needsUpdate)
+            // Update path periodically OR if target moved significantly
+            bool targetMovedFar = Vector3.Distance(targetPos, lastPathTargetPosition) > PATH_RECALC_DISTANCE;
+            if (needsUpdate || targetMovedFar)
             {
                 UpdatePath(targetPos);
+                lastPathTargetPosition = targetPos; // Track where we calculated path to
                 pathUpdateTimer = PATH_UPDATE_RATE;
             }
             
@@ -253,8 +260,9 @@ public class EnemyMovementController : MonoBehaviour
             if (currentPath != null && currentPath.Count > 0)
             {
                 // Check if reached current waypoint
-                // Tweaked: 0.4f (from 1.0f) to prevent corner cutting into walls!
-                if (currentPathIndex < currentPath.Count && Vector2.Distance(transform.position, currentPath[currentPathIndex]) < 0.4f)
+                // Reduced to 0.5f (was 0.2f) - 0.2f was too strict causing wall pushing/clipping
+                // Enemy must reach the corner before turning.
+                if (currentPathIndex < currentPath.Count && Vector2.Distance(transform.position, currentPath[currentPathIndex]) < 0.5f)
                 {
                     currentPathIndex++;
                 }
@@ -274,7 +282,7 @@ public class EnemyMovementController : MonoBehaviour
                 }
                 else
                 {
-                    // Path finished
+                    // Path finished - reached end of current path
                     if (pathfindingMode == PathfindingMode.Flee)
                     {
                         // Fled successfully, continue fleeing with direct flee
@@ -283,6 +291,37 @@ public class EnemyMovementController : MonoBehaviour
                         {
                             fleeBehaviour.IsEnabled = true;
                             fleeBehaviour.Threat = pathfindingTarget;
+                        }
+                    }
+                    else if (pathfindingMode == PathfindingMode.Chase && pathfindingTarget != null)
+                    {
+                        // PATH FINISHED BUT TARGET STILL EXISTS!
+                        // Immediately recalculate path to current target position
+                        // This prevents "stuck" behavior when player moves after path was calculated
+                        UpdatePath(pathfindingTarget.position);
+                        pathUpdateTimer = PATH_UPDATE_RATE; // Reset timer
+                        
+                        // If new path exists, seek first waypoint
+                        if (currentPath != null && currentPath.Count > 0)
+                        {
+                            currentPathIndex = 0;
+                            if (seekBehaviour != null)
+                            {
+                                seekBehaviour.TargetPosition = currentPath[0];
+                            }
+                            if (avoidObstacleBehaviour != null)
+                            {
+                                avoidObstacleBehaviour.DesiredDirection = (currentPath[0] - transform.position).normalized;
+                            }
+                        }
+                        else
+                        {
+                            // Still no path? Direct seek as fallback
+                            if (seekBehaviour != null)
+                            {
+                                seekBehaviour.TargetPosition = pathfindingTarget.position;
+                            }
+                            avoidObstacleBehaviour.DesiredDirection = (pathfindingTarget.position - transform.position).normalized;
                         }
                     }
                     else
@@ -431,6 +470,13 @@ public class EnemyMovementController : MonoBehaviour
     {
         if (Pathfinding.PathfindingManager.Instance != null)
         {
+            // Optimization: Don't recalc if target is same (approx)
+            if (isPathfinding && pathfindingMode == PathfindingMode.Chase && 
+                pathfindingDestination.HasValue && Vector3.Distance(pathfindingDestination.Value, destination) < 0.5f)
+            {
+               return;
+            }
+
             isPathfinding = true;
             pathfindingMode = PathfindingMode.Chase;
             pathfindingDestination = destination;
@@ -445,6 +491,7 @@ public class EnemyMovementController : MonoBehaviour
         
         separationBehaviour.IsEnabled = true;
     }
+
 
     public void SetChaseMode(Transform target)
     {
@@ -473,6 +520,7 @@ public class EnemyMovementController : MonoBehaviour
             
             // Initial path
             UpdatePath(target.position);
+            lastPathTargetPosition = target.position; // Track for distance-based recalc
         }
         else
         {
@@ -510,56 +558,7 @@ public class EnemyMovementController : MonoBehaviour
             
             // STUCK FALLBACK: If we've been stuck for a while (> 0.5s), don't look for slots!
             // Just chase the player directly to get un-stuck.
-            if (stuckTimer > 0.5f)
-            {
-                SetChaseMode(target);
-                return;
-            }
-            
-            if (slotPos.HasValue && distToPlayer > slotApproachDistance)
-            {
-                // Jauh dari player: bergerak ke arah SLOT POSITION, bukan player!
-                
-                // Check dan cache noise HANYA saat slot berubah
-                int currentSlot = CombatManager.Instance.GetEnemySlot(gameObject);
-                if (currentSlot != lastAssignedSlot)
-                {
-                    lastAssignedSlot = currentSlot;
-                    cachedApproachNoise = Random.Range(-10f, 10f); // Generate sekali saja
-                }
-                
-                // Hitung posisi antara slot dan player dengan CACHED noise
-                Vector2 slotDirection = (slotPos.Value - (Vector2)target.position).normalized;
-                slotDirection = Quaternion.Euler(0, 0, cachedApproachNoise) * slotDirection;
-                
-                Vector2 approachPoint = (Vector2)target.position + slotDirection * slotApproachDistance;
-                
-                // Create temp transform if needed
-                if (slotApproachTarget == null)
-                {
-                    GameObject tempGO = new GameObject("ApproachPoint_" + gameObject.name);
-                    slotApproachTarget = tempGO.transform;
-                }
-                slotApproachTarget.position = approachPoint;
-                
-                // Calculate distance to approach point
-                float distToApproachPoint = Vector2.Distance(transform.position, approachPoint);
-                
-                // Jika enemy lebih dekat ke approach point, langsung ke player
-                if (distToApproachPoint < 1.5f)
-                {
-                    SetChaseMode(target);
-                }
-                else
-                {
-                    SetChaseMode(slotApproachTarget);
-                }
 
-                // Set Player as explicit avoidance target to prevent walking into them while flanking
-                // (Re-apply this because SetChaseMode clears it)
-                 separationBehaviour.ExtraRepulsionTarget = target;
-            }
-            else
             {
                 // Dekat player: chase langsung
                 SetChaseMode(target);

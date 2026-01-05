@@ -56,6 +56,15 @@ public class EnemyHealth : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Set health to a specific value. Used for boss phase transition HP regen.
+    /// </summary>
+    public void SetHealth(int value)
+    {
+        if (isDead) return;
+        currentHealth = Mathf.Clamp(value, 0, maxHealth);
+    }
+
     private void Die()
     {
         isDead = true;

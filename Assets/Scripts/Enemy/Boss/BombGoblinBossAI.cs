@@ -59,6 +59,9 @@ public class BombGoblinBossAI : BaseEnemyAI
     [Header("Phase Transition")]
     [SerializeField] private float phaseTransitionDuration = 1.5f;
     [SerializeField] private bool invulnerableDuringTransition = true;
+    [SerializeField] private float transitionRetreatDistance = 8f;
+    [SerializeField] private int transitionMinionCount = 2;
+    [SerializeField] private float transitionRetreatTimeout = 3f;
     
     [Header("Audio")]
     [SerializeField] private AudioSource audioSource;
@@ -85,6 +88,8 @@ public class BombGoblinBossAI : BaseEnemyAI
     
     private bool isTransitioning = false;
     private bool wasInvulnerable = false;
+    private BossPhase pendingPhase; // Phase being transitioned to
+    private bool isSpawningMinions = false; // Flag to prevent animation override during spawn
     
     // NOTE: enemyAnimator is inherited from BaseEnemyAI (protected)
     // Do NOT redeclare it here or it will shadow the base variable!
@@ -124,7 +129,11 @@ public class BombGoblinBossAI : BaseEnemyAI
         if (isTransitioning)
         {
             HandlePhaseTransition();
-            UpdateAnimationState(); // Keep animations running during transition
+            // Only update animation if NOT in spawn phase (to prevent idle animation override)
+            if (!isSpawningMinions)
+            {
+                UpdateAnimationState();
+            }
             return;
         }
         
@@ -168,41 +177,163 @@ public class BombGoblinBossAI : BaseEnemyAI
         LogDebug($"<color=yellow>PHASE TRANSITION: {currentPhase} → {newPhase}</color>");
         
         isTransitioning = true;
-        currentPhase = newPhase;
-        phaseTransitionEndTime = Time.time + phaseTransitionDuration;
+        pendingPhase = newPhase;
         
-        // Stop all movement
+        // Start the transition coroutine
+        StartCoroutine(PhaseTransitionSequence(newPhase));
+    }
+
+    private IEnumerator PhaseTransitionSequence(BossPhase newPhase)
+    {
+        // 1. Stop movement and spawn minions as shield
+        isSpawningMinions = true; // Prevent animation override
         movementController.StopMoving();
-        FreezeMovement(true); // CRITICAL: Prevent sliding
+        FreezeMovement(true);
         
-        // Play transition effects
-        PlaySound(phaseTransitionSound);
-        
-        // Set invulnerable during transition
-        if (invulnerableDuringTransition && health != null)
+        // CRITICAL: Ensure velocity is completely zero
+        if (rb != null)
         {
-            wasInvulnerable = false; // Store previous state if needed
-            // Could add invulnerability flag to EnemyHealth
+            rb.linearVelocity = Vector2.zero;
+            rb.angularVelocity = 0f;
         }
         
-        // Visual feedback - could trigger animation
+        // Play summon animation and sound
         if (enemyAnimator != null)
         {
-            // enemyAnimator.PlayPhaseTransition(); // If implemented
+            if (player != null)
+            {
+                Vector2 dirToPlayer = (player.position - transform.position).normalized;
+                enemyAnimator.SetFacingDirection(dirToPlayer);
+            }
+            // Force idle animation (speed = 0) before playing attack
+            enemyAnimator.UpdateMovementAnimation(false, false);
+            enemyAnimator.PlayAttack();
         }
+        PlaySound(summonSound);
+        PlaySound(phaseTransitionSound);
+        
+        LogDebug($"Spawning {transitionMinionCount} minions as shield!");
+        
+        // Spawn minions between boss and player
+        for (int i = 0; i < transitionMinionCount; i++)
+        {
+            // Keep zeroing velocity each frame during spawn to prevent drifting
+            if (rb != null)
+            {
+                rb.linearVelocity = Vector2.zero;
+            }
+            
+            SpawnMinionBetweenBossAndPlayer();
+            yield return new WaitForSeconds(0.2f);
+        }
+        
+        // Extra wait, keep frozen
+        if (rb != null)
+        {
+            rb.linearVelocity = Vector2.zero;
+        }
+        yield return new WaitForSeconds(0.3f);
+        
+        // 2. Retreat from player - end spawn phase
+        isSpawningMinions = false; // Allow animation updates again
+        FreezeMovement(false);
+        Vector3 retreatStartPos = transform.position;
+        float retreatTimer = transitionRetreatTimeout;
+        float retreatUpdateInterval = 0.5f; // Update retreat direction every 0.5s (not every frame!)
+        float nextRetreatUpdate = 0f;
+        
+        LogDebug($"Retreating to safe distance ({transitionRetreatDistance} units)...");
+        
+        while (retreatTimer > 0)
+        {
+            float retreatedDistance = Vector3.Distance(transform.position, retreatStartPos);
+            
+            // Check if reached safe distance
+            if (retreatedDistance >= transitionRetreatDistance)
+            {
+                LogDebug($"Reached safe distance! Retreated {retreatedDistance:F1} units.");
+                break;
+            }
+            
+            // Update retreat direction periodically (not every frame to avoid lag)
+            if (Time.time >= nextRetreatUpdate)
+            {
+                movementController.SetRetreatMode(player, false);
+                nextRetreatUpdate = Time.time + retreatUpdateInterval;
+            }
+            
+            retreatTimer -= Time.deltaTime;
+            
+            yield return null;
+        }
+        
+        // 3. Stop and regen HP to phase threshold
+        movementController.StopMoving();
+        
+        int targetHealth = newPhase switch
+        {
+            BossPhase.Phase2 => Mathf.RoundToInt(health.MaxHealth * phase2Threshold),
+            BossPhase.Phase3 => Mathf.RoundToInt(health.MaxHealth * phase3Threshold),
+            _ => health.CurrentHealth
+        };
+        
+        // Only regen if current HP is lower than target
+        if (health.CurrentHealth < targetHealth)
+        {
+            health.SetHealth(targetHealth);
+            LogDebug($"<color=cyan>HP REGEN: {health.CurrentHealth} → {targetHealth} ({health.HealthPercentage * 100:F0}%)</color>");
+        }
+        
+        // 4. Transition complete
+        currentPhase = newPhase;
+        isTransitioning = false;
+        
+        LogDebug($"<color=green>Phase {currentPhase} ACTIVE!</color>");
+        
+        // Resume combat
+        ChangeState(AIState.Chase);
+    }
+    
+    /// <summary>
+    /// Spawn a minion between the boss and the player to act as a shield
+    /// </summary>
+    private void SpawnMinionBetweenBossAndPlayer()
+    {
+        // Choose prefab: 70% Spear, 30% Archer
+        GameObject prefab = Random.value < spearSpawnChance ? spearGoblinPrefab : archerGoblinPrefab;
+        
+        if (prefab == null)
+        {
+            LogDebug("<color=red>Minion prefab is null!</color>");
+            return;
+        }
+        
+        if (player == null) return;
+        
+        // Calculate position between boss and player
+        Vector3 dirToPlayer = (player.position - transform.position).normalized;
+        float distToPlayer = Vector3.Distance(transform.position, player.position);
+        
+        // Spawn at 30-50% distance between boss and player, with some randomness
+        float spawnDistance = distToPlayer * Random.Range(0.3f, 0.5f);
+        Vector3 baseSpawnPos = transform.position + dirToPlayer * spawnDistance;
+        
+        // Add perpendicular offset for variety
+        Vector2 perpendicular = new Vector2(-dirToPlayer.y, dirToPlayer.x);
+        float lateralOffset = Random.Range(-1.5f, 1.5f);
+        Vector3 spawnPos = baseSpawnPos + (Vector3)(perpendicular * lateralOffset);
+        
+        GameObject minion = Instantiate(prefab, spawnPos, Quaternion.identity);
+        activeMinions.Add(minion);
+        
+        LogDebug($"Spawned shield minion: {prefab.name} at {spawnPos}");
     }
 
     private void HandlePhaseTransition()
     {
-        if (Time.time >= phaseTransitionEndTime)
-        {
-            isTransitioning = false;
-            LogDebug($"<color=green>Phase {currentPhase} ACTIVE!</color>");
-            
-            // Resume combat
-            FreezeMovement(false); // Unfreeze
-            ChangeState(AIState.Chase);
-        }
+        // Phase transition is now handled by coroutine
+        // This method is kept for compatibility but does nothing
+        // The coroutine will set isTransitioning = false when done
     }
     #endregion
 

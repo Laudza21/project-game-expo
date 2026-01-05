@@ -171,13 +171,13 @@ public class BossSpawnedBomb : MonoBehaviour
             if (playerHealth != null)
             {
                 playerHealth.TakeDamage(damage);
-                Debug.Log($"<color=red>[BossSpawnedBomb] Hit player for {damage} damage!</color>");
+                // Debug.Log($"<color=red>[BossSpawnedBomb] Hit player for {damage} damage!</color>");
             }
             
             // Note: Does NOT damage enemies (boss or minions)
         }
         
-        Debug.Log($"<color=orange>[BossSpawnedBomb]</color> Exploded at {transform.position}");
+        // Debug.Log($"<color=orange>[BossSpawnedBomb]</color> Exploded at {transform.position}");
     }
     
     private void SpawnExplosionEffect()

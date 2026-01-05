@@ -148,6 +148,11 @@ public class GoblinSpearAI : BaseEnemyAI
     // Feint State Variables
     private bool isFeintApproaching;
     private Vector2 feintStartPosition;
+
+    // Search State Variables
+    private bool isSearchingArea;
+    private bool hasCheckedPredictedPosition; // NEW: Flag for first predictive check
+    private float nextSearchMoveTime;
     private float feintPhaseEndTime;
     private float feintRetreatStartTime; // Track when retreat started for grace period
     
@@ -246,6 +251,8 @@ public class GoblinSpearAI : BaseEnemyAI
         }
     }
 
+
+
     private void Reset()
     {
         // Default values for Spear Goblin
@@ -274,7 +281,8 @@ public class GoblinSpearAI : BaseEnemyAI
         }
         
         // Too far? Check memory before giving up
-        if (distanceToPlayer > loseTargetRange)
+        // FIX: Only give up if Memory EXPIRED!
+        if (distanceToPlayer > loseTargetRange && Time.time > chaseMemoryEndTime)
         {
             isRushingToAttack = false;
             isFirstEngagement = true;
@@ -285,36 +293,27 @@ public class GoblinSpearAI : BaseEnemyAI
             return;
         }
         
-        // Lost line of sight but within range? Use memory timer and CHASE to last known position!
+        // Lost line of sight but within range? 
+        // HYBRID SYSTEM: Keep chasing REAL player position while memory active!
         if (!canSeePlayer)
         {
             if (Time.time > chaseMemoryEndTime)
             {
-                // Memory expired! Lost the player.
+                // Memory expired! Lost the player completely.
                 isRushingToAttack = false;
                 isFirstEngagement = true;
-                LogDebug("Lost sight of player! Memory expired. Searching...", "yellow");
+                LogDebug("Lost sight of player! Memory expired. Searching at last known position...", "yellow");
                 ChangeState(AIState.Search);
                 return;
             }
             else
             {
-                // Memory still active! Keep chasing toward LAST KNOWN position!
-                // This makes enemy follow player into rooms instead of giving up at door
-                float distToLastKnown = Vector2.Distance(transform.position, lastKnownPlayerPosition);
-                if (distToLastKnown > 1.0f)
-                {
-                    // Stay in Chase mode! Pathfind to LAST KNOWN position (not player!)
-                    movementController.SetChaseDestination(lastKnownPlayerPosition);
-                    LogDebug($"Chasing last known position... (memory: {chaseMemoryEndTime - Time.time:F1}s)", "cyan");
-                }
-                else
-                {
-                    // Reached last known position but no player - keep looking!
-                    // Extend memory slightly to give more search time at the spot
-                    chaseMemoryEndTime = Time.time + 10f; // Extra 10 seconds at the spot
-                    LogDebug("Reached last known position, looking around...", "cyan");
-                }
+                // HYBRID: Memory still active! Keep chasing player's REAL position!
+                // This makes enemy aggressively pursue even without direct line of sight
+                // They "know" where player is going and will pathfind around obstacles
+                movementController.SetChaseMode(player);
+                LogDebug($"Memory active! Chasing player's real position... (memory: {chaseMemoryEndTime - Time.time:F1}s)", "cyan");
+                return; // RETURN HERE: Focus on chasing until player is visible again! Don't do formation/tactics!
             }
         }
         
@@ -522,6 +521,16 @@ public class GoblinSpearAI : BaseEnemyAI
     // ==========================================
     private void HandlePacingState(float distanceToPlayer)
     {
+        // Player escaping? Chase immediately!
+        if (distanceToPlayer > engagementRange * 1.5f)
+        {
+            LogDebug($"Pacing: Player escaping! (dist: {distanceToPlayer:F1}) Chasing!", "yellow");
+            corneredTimer = 0f;
+            ResetFleeExhaustion();
+            ChangeState(AIState.Chase);
+            return;
+        }
+        
         // === OPSI 2: Chase Back Trigger (dengan cooldown untuk balance) ===
         // Jika player SANGAT dekat DAN cooldown sudah selesai, enemy react!
         float colliderDist = GetColliderDistance();
@@ -740,10 +749,18 @@ public class GoblinSpearAI : BaseEnemyAI
     // ==========================================
     private void HandleBlindSpotSeekState(float distanceToPlayer)
     {
-        // Lost player?
+        // Lost player completely?
         if (distanceToPlayer > loseTargetRange)
         {
             ChangeState(AIState.Patrol);
+            return;
+        }
+        
+        // Player escaping? Chase immediately instead of continuing tactical behavior!
+        if (distanceToPlayer > engagementRange * 1.5f)
+        {
+            LogDebug($"BlindSpotSeek: Player escaping! (dist: {distanceToPlayer:F1}) Chasing!", "yellow");
+            ChangeState(AIState.Chase);
             return;
         }
         
@@ -880,6 +897,14 @@ public class GoblinSpearAI : BaseEnemyAI
         if (distanceToPlayer > loseTargetRange)
         {
             ChangeState(AIState.Patrol);
+            return;
+        }
+
+        // Player escaping? Chase immediately!
+        if (distanceToPlayer > engagementRange * 1.5f)
+        {
+            LogDebug($"Feint: Player escaping! (dist: {distanceToPlayer:F1}) Chasing!", "yellow");
+            ChangeState(AIState.Chase);
             return;
         }
         
@@ -1029,6 +1054,15 @@ public class GoblinSpearAI : BaseEnemyAI
         {
             hasRetreatEnough = true;
         }
+
+        // Player escaping? Chase immediately!
+        if (distanceToPlayer > engagementRange * 1.5f)
+        {
+            LogDebug($"Retreat: Player escaping! (dist: {distanceToPlayer:F1}) Chasing!", "yellow");
+            ResetFleeExhaustion();
+            ChangeState(AIState.Chase);
+            return;
+        }
         
         // === FLEE EXHAUSTION CHECK ===
         // Track continuous flee time saat dalam Retreat
@@ -1140,24 +1174,59 @@ public class GoblinSpearAI : BaseEnemyAI
         if (distanceToPlayer <= detectionRange && HasLineOfSightToPlayer(false))
         {
             LogDebug("Search: Found player again! Resuming chase!", "yellow");
-            ChangeState(AIState.Hesitate);
+            ChangeState(AIState.Chase);
             return;
         }
-        
-        // Move to last known position
-        float distToLastKnown = Vector2.Distance(transform.position, lastKnownPlayerPosition);
-        
-        if (distToLastKnown > 1.0f)
+
+        // PHASE 1: Go to last known position (Run)
+        if (!isSearchingArea)
         {
-            // Still moving to position
-            movementController.SetPatrolDestination(lastKnownPlayerPosition);
+            float distToLastKnown = Vector2.Distance(transform.position, lastKnownPlayerPosition);
+            
+            if (distToLastKnown > 1.5f)
+            {
+                // Still moving to position - Run!
+                movementController.SetChaseDestination(lastKnownPlayerPosition);
+            }
+            else
+            {
+                // Reached position! Start investigating area (Walk)
+                LogDebug("Last known position reached. Starting area search...", "cyan");
+                isSearchingArea = true;
+                nextSearchMoveTime = Time.time + 0.5f; // Pause briefly
+                movementController.StopMoving();
+            }
         }
+        // PHASE 2: Wander around (Predictive -> Random)
         else
         {
-            // Reached position - look around
-            movementController.StopMoving();
+            if (Time.time >= nextSearchMoveTime)
+            {
+                Vector3 searchPoint;
+
+                // TRY 1: Prediction based on velocity (First move only)
+                if (!hasCheckedPredictedPosition && lastKnownPlayerVelocity.sqrMagnitude > 0.1f)
+                {
+                    LogDebug("Search: Checking predicted path (Velocity Extrapolation)...", "cyan");
+                    Vector3 predictedOffset = lastKnownPlayerVelocity.normalized * 5.0f; // Check 5m ahead
+                    searchPoint = lastKnownPlayerPosition + predictedOffset;
+                    hasCheckedPredictedPosition = true; // Mark done
+                }
+                else
+                {
+                    // TRY 2: Random Wander
+                    Vector2 randomOffset = Random.insideUnitCircle * 4.0f; 
+                    searchPoint = lastKnownPlayerPosition + (Vector3)randomOffset;
+                }
+                
+                // Move there using Patrol (Walk) speed
+                movementController.SetPatrolDestination(searchPoint);
+                
+                // Set next move time
+                nextSearchMoveTime = Time.time + Random.Range(2.5f, 4.0f);
+            }
             
-            // Timeout check
+            // Timeout Check
             if (Time.time >= searchEndTime)
             {
                 LogDebug("Search complete. Returning to patrol.", "cyan");
@@ -1175,6 +1244,22 @@ public class GoblinSpearAI : BaseEnemyAI
 
         switch (state)
         {
+            case AIState.Chase:
+                // Init memory to prevent instant expire if LOS is lost immediately
+                chaseMemoryEndTime = Time.time + chaseMemoryDuration;
+                break;
+                
+            case AIState.Search:
+                isSearchingArea = false;
+                hasCheckedPredictedPosition = false; // Reset flag
+                nextSearchMoveTime = 0f;
+                // searchEndTime is set in UpdateState -> HandleSearchState check? 
+                // No, BaseEnemyAI sets searchEndTime! OR we should set it here.
+                // BaseEnemyAI doesn't have EnterState default logic for timer.
+                // Let's set it here to be safe and consistent with Archer.
+                searchEndTime = Time.time + searchDuration;
+                break;
+
             case AIState.Surround:
                 movementController.SetSurroundMode(player);
                 break;
@@ -1274,10 +1359,7 @@ public class GoblinSpearAI : BaseEnemyAI
                 movementController.SetFeintApproachMode(player, feintApproachDistance);
                 break;
                 
-            case AIState.Search:
-                LogDebug($"Status: Search (investigating last known position)", "yellow");
-                // Set the timer for how long to search before giving up
-                searchEndTime = Time.time + searchDuration;
+                // Removed duplicate AIState.Search case
                 break;
         }
     }

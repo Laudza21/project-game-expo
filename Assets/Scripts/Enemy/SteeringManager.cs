@@ -28,6 +28,40 @@ public class SteeringManager : MonoBehaviour
     {
         rb = GetComponent<Rigidbody2D>();
         
+        // --- PHYSICS ENFORCEMENT ---
+        // Ensure Rigidbody is set up correctly to collide with walls
+        if (rb != null)
+        {
+            rb.bodyType = RigidbodyType2D.Dynamic; // MUST be Dynamic to collide with Static walls
+            rb.collisionDetectionMode = CollisionDetectionMode2D.Continuous; // Prevents tunneling at high speeds
+            rb.gravityScale = 0f; // Top-down game, no gravity
+            rb.constraints = RigidbodyConstraints2D.FreezeRotation; // Don't roll around
+            rb.sleepMode = RigidbodySleepMode2D.StartAwake;
+        }
+
+        // Safety: Auto-assign collision mask if forgotten
+        if (collisionMask.value == 0)
+        {
+            // PRO TRY: Get mask from PathfindingManager if available
+            if (Pathfinding.PathfindingManager.Instance != null)
+            {
+                var grid = Pathfinding.PathfindingManager.Instance.GetGrid();
+                if (grid != null)
+                {
+                    collisionMask = grid.unwalkableMask;
+                    Debug.Log($"[{gameObject.name}] SteeringManager: Auto-synced Collision Mask with Grid ({collisionMask.value})");
+                }
+            }
+
+            // Fallback if still empty
+            if (collisionMask.value == 0)
+            {
+                Debug.LogWarning($"[{gameObject.name}] SteeringManager: Collision Mask empty! Defaulting to 'Default' + 'Obstacle'.");
+                collisionMask = LayerMask.GetMask("Default", "Obstacle", "Wall", "Environment"); // Try common names
+                if (collisionMask.value == 0) collisionMask = 1; // Last resort: Default layer
+            }
+        }
+        
         // Collect existing behaviours safely
         var existingBehaviours = GetComponents<SteeringBehaviour>();
         foreach (var behaviour in existingBehaviours)
@@ -95,13 +129,90 @@ public class SteeringManager : MonoBehaviour
         return Vector2.zero;
     }
 
+    [Header("Physics Settings")]
+    [SerializeField] private LayerMask collisionMask; // Set this to "Default", "Obstacle", etc.
+
     private void ApplySteeringForce(Vector2 force)
     {
         // Clamp to max acceleration
         Vector2 acceleration = Vector2.ClampMagnitude(force, maxAcceleration);
         
-        // Calculate desired velocity (same approach as Player uses - respects collision!)
+        // Calculate desired velocity
         Vector2 desiredVelocity = rb.linearVelocity + acceleration * Time.fixedDeltaTime;
+        
+        // Clamp to max speed
+        desiredVelocity = Vector2.ClampMagnitude(desiredVelocity, maxSpeed);
+        
+        // Apply drag
+        desiredVelocity *= (1f - drag * Time.fixedDeltaTime);
+
+        // --- MANUAL COLLISION AVOIDANCE (WALL SLIDE) ---
+        // Prevent setting velocity INTO a wall
+        float checkDistance = desiredVelocity.magnitude * Time.fixedDeltaTime * 2.0f; // Look 2 frames ahead
+        checkDistance = Mathf.Max(checkDistance, 0.5f); // HARD MINIMUM: Check at least 0.5 units ahead (ensures detection even at low speed)
+
+        if (checkDistance > 0.01f)
+        {
+            // Robust Body Radius Detection
+            float bodyRadius = 0.3f; // Default fallback
+            var col = GetComponent<Collider2D>();
+            if (col != null)
+            {
+                if (col is CircleCollider2D circle)
+                    bodyRadius = circle.radius * Mathf.Max(transform.localScale.x, transform.localScale.y);
+                else if (col is BoxCollider2D box)
+                    bodyRadius = Mathf.Min(box.size.x, box.size.y) * 0.5f * Mathf.Max(transform.localScale.x, transform.localScale.y);
+                else if (col is CapsuleCollider2D capsule)
+                    bodyRadius = capsule.size.x * 0.5f * Mathf.Max(transform.localScale.x, transform.localScale.y);
+                else
+                    bodyRadius = col.bounds.extents.x; // Generic fallback
+            }
+
+            // Reduce radius slightly to avoid catching corners we could visually slip by
+            float castRadius = bodyRadius * 0.85f; 
+
+            RaycastHit2D hit = Physics2D.CircleCast(rb.position, castRadius, desiredVelocity.normalized, checkDistance, collisionMask);
+            
+            // DEBUG: Visualisasi Raycast
+            #if UNITY_EDITOR
+            Color debugColor = (hit.collider != null) ? Color.red : Color.green;
+            Debug.DrawLine(rb.position, rb.position + desiredVelocity.normalized * (checkDistance + castRadius), debugColor);
+            #endif
+
+            if (hit.collider != null && !hit.collider.isTrigger)
+            {
+                // CRITICAL FIX: Handle Stuck/Overlap case
+                // If distance is 0, we are likely already colliding or inside.
+                // Instead of sliding, we should STOP or PUSH BACK.
+                if (hit.distance <= 0.01f)
+                {
+                    // Push away from wall normal
+                    Vector2 wallNormal = hit.normal;
+                     // If normal is zero (deep overlap), assume opposite to velocity
+                    if (wallNormal == Vector2.zero) wallNormal = -desiredVelocity.normalized;
+                    
+                    desiredVelocity = wallNormal * 2.0f; // Push OUT
+                    #if UNITY_EDITOR
+                    Debug.DrawRay(rb.position, desiredVelocity, Color.magenta, 0.1f);
+                    #endif
+                }
+                else
+                {
+                    // Normal approach: Slide
+                    Vector2 normal = hit.normal;
+                    
+                    // Slide: Project on Tangent
+                    Vector2 tangent = new Vector2(-normal.y, normal.x);
+                    if (Vector2.Dot(tangent, desiredVelocity) < 0) tangent = -tangent; // Ensure tangent points in movement direction
+                    
+                    // Project velocity onto tangent
+                    Vector2 slideVelocity = tangent * desiredVelocity.magnitude;
+                    
+                    // Apply slide velocity
+                    desiredVelocity = slideVelocity;
+                }
+            }
+        }
         
         // Clamp to max speed
         desiredVelocity = Vector2.ClampMagnitude(desiredVelocity, maxSpeed);
