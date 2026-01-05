@@ -30,7 +30,7 @@ public class EnemyAnimator : MonoBehaviour
     private void Awake()
     {
         animator = GetComponent<Animator>();
-        rb = GetComponent<Rigidbody2D>();
+        rb = GetComponentInParent<Rigidbody2D>();
         
         if (animator == null)
             animator = GetComponentInChildren<Animator>();
@@ -62,6 +62,12 @@ public class EnemyAnimator : MonoBehaviour
             lastVertical = vertical;
         }
 
+        // Runtime fallback: If rb was null during Awake, try to find it now
+        if (rb == null)
+        {
+            rb = GetComponentInParent<Rigidbody2D>();
+        }
+
         // Check valid movement: explicit state says moving AND actually moving physically
         if (isMoving && rb != null && rb.linearVelocity.magnitude > 0.1f)
         {
@@ -85,6 +91,10 @@ public class EnemyAnimator : MonoBehaviour
         animator.SetFloat(AnimSpeed, speed);
         animator.SetFloat(AnimHorizontal, horizontal);
         animator.SetFloat(AnimVertical, vertical);
+        
+        // DEBUG: Uncomment to diagnose animation issues
+        // if (Time.frameCount % 60 == 0)
+        //     Debug.Log($"[EnemyAnimator {gameObject.name}] rb={(rb != null ? "OK" : "NULL")}, isMoving={isMoving}, velocity={(rb != null ? rb.linearVelocity.magnitude.ToString("F2") : "N/A")}, speed={speed}");
     }
 
     /// <summary>

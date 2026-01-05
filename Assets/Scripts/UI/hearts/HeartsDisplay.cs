@@ -53,6 +53,7 @@ public class HeartsDisplay : MonoBehaviour
         playerHealth.OnHealthChanged.AddListener(OnHealthChanged);
         playerHealth.OnDamageTaken.AddListener(OnDamageTaken);
         playerHealth.OnHealed.AddListener(OnHealed);
+        playerHealth.OnMaxHealthChanged.AddListener(OnMaxHealthChanged);
         
         InitializeHearts();
         UpdateHearts(playerHealth.GetCurrentHealth(), false);
@@ -67,7 +68,16 @@ public class HeartsDisplay : MonoBehaviour
             playerHealth.OnHealthChanged.RemoveListener(OnHealthChanged);
             playerHealth.OnDamageTaken.RemoveListener(OnDamageTaken);
             playerHealth.OnHealed.RemoveListener(OnHealed);
+            playerHealth.OnMaxHealthChanged.RemoveListener(OnMaxHealthChanged);
         }
+    }
+    
+    void OnMaxHealthChanged(int newMaxHealth)
+    {
+        // Rebuild hearts when max health changes (e.g. accessory equipped)
+        InitializeHearts();
+        UpdateHearts(playerHealth.GetCurrentHealth(), false);
+        Debug.Log($"<color=green>[HeartsDisplay] Max health changed to {newMaxHealth}, rebuilding hearts!</color>");
     }
     
     void InitializeHearts()

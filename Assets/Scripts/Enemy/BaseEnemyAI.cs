@@ -108,7 +108,7 @@ public abstract class BaseEnemyAI : MonoBehaviour
     {
         rb = GetComponent<Rigidbody2D>();
         health = GetComponent<EnemyHealth>();
-        enemyAnimator = GetComponent<EnemyAnimator>();
+        enemyAnimator = GetComponentInChildren<EnemyAnimator>();
         movementController = GetComponent<EnemyMovementController>();
         
         movementController.Initialize(formationManager);
@@ -524,6 +524,11 @@ public abstract class BaseEnemyAI : MonoBehaviour
 
             case AIState.Chase:
                 movementController.SetChaseMode(player);
+                break;
+            
+            case AIState.Attack:
+                // CRITICAL: Stop movement during attack to prevent sliding!
+                movementController.StopMoving();
                 break;
                 
             case AIState.Pacing:

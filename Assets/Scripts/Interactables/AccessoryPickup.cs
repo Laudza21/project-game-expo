@@ -168,20 +168,37 @@ public class AccessoryPickup : MonoBehaviour, IInteractable
     // 1. Interactable Implementation
     public void Interact()
     {
-        if (canCollect) Pickup();
+        Debug.Log($"[AccessoryPickup] Interact() called! canCollect={canCollect}, isBouncing={isBouncing}");
+        
+        if (!canCollect)
+        {
+            Debug.Log($"[AccessoryPickup] Cannot collect yet. Timer: {collectTimer}/{collectDelay}");
+            return;
+        }
+        
+        Pickup();
     }
 
-    // 2. Trigger Implementation
-    private void OnTriggerEnter2D(Collider2D other)
-    {
-        if (canCollect && other.CompareTag("Player"))
-        {
-            Pickup(other.gameObject);
-        }
-    }
+    // 2. Trigger Implementation - DISABLED (harus interact untuk pickup)
+    // private void OnTriggerEnter2D(Collider2D other)
+    // {
+    //     if (canCollect && other.CompareTag("Player"))
+    //     {
+    //         Pickup(other.gameObject);
+    //     }
+    // }
+
+    [Header("Collect Effect")]
+    [SerializeField] private float collectDuration = 0.3f; // Durasi efek terhisap
+    
+    private bool isBeingCollected = false;
 
     private void Pickup(GameObject player = null)
     {
+        if (isBeingCollected) return; // Prevent double pickup
+        
+        Debug.Log("[AccessoryPickup] Pickup() method called!");
+        
         if (player == null)
         {
             player = GameObject.FindGameObjectWithTag("Player");
@@ -190,25 +207,63 @@ public class AccessoryPickup : MonoBehaviour, IInteractable
         if (player != null)
         {
             var manager = player.GetComponent<PlayerAccessoryManager>();
+            if (manager == null)
+            {
+                manager = player.GetComponentInParent<PlayerAccessoryManager>();
+            }
+            
             if (manager != null)
             {
-                if (accessoryData != null)
-                {
-                    manager.EquipAccessory(accessoryData);
-                    Debug.Log($"Equipped: {accessoryData.accessoryName}");
-                }
-                
-                if (pickupSound != null)
-                {
-                    AudioSource.PlayClipAtPoint(pickupSound, transform.position);
-                }
-                
-                Destroy(gameObject);
+                // Start collection effect
+                isBeingCollected = true;
+                StartCoroutine(CollectEffect(player.transform, manager));
             }
             else
             {
-                Debug.LogWarning("PlayerAccessoryManager not found on Player!");
+                Debug.LogWarning("[AccessoryPickup] PlayerAccessoryManager not found!");
             }
         }
+        else
+        {
+            Debug.LogWarning("[AccessoryPickup] Player GameObject not found!");
+        }
+    }
+    
+    private System.Collections.IEnumerator CollectEffect(Transform target, PlayerAccessoryManager manager)
+    {
+        Vector3 startPos = transform.position;
+        Vector3 startScale = transform.localScale;
+        float timer = 0f;
+        
+        while (timer < collectDuration)
+        {
+            timer += Time.deltaTime;
+            float progress = timer / collectDuration;
+            
+            // Ease out untuk gerakan lebih smooth
+            float easedProgress = 1f - Mathf.Pow(1f - progress, 3f);
+            
+            // Move towards player
+            transform.position = Vector3.Lerp(startPos, target.position, easedProgress);
+            
+            // Shrink
+            transform.localScale = Vector3.Lerp(startScale, Vector3.zero, easedProgress);
+            
+            yield return null;
+        }
+        
+        // Selesai efek - equip accessory
+        if (accessoryData != null)
+        {
+            manager.EquipAccessory(accessoryData);
+            Debug.Log($"[AccessoryPickup] Equipped: {accessoryData.accessoryName}");
+        }
+        
+        if (pickupSound != null)
+        {
+            AudioSource.PlayClipAtPoint(pickupSound, target.position);
+        }
+        
+        Destroy(gameObject);
     }
 }

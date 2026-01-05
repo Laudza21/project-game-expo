@@ -453,6 +453,11 @@ public class PlayerAnimationController : MonoBehaviour
     /// </summary>
     public void SetFacingDirection(Vector2 direction)
     {
+        if (animator == null)
+            animator = GetComponent<Animator>();
+            
+        if (animator == null) return;
+
         lastDirection = direction.normalized;
         directionLockTimer = 0f; // Reset lock timer
         

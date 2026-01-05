@@ -13,8 +13,8 @@ public class ChestController : MonoBehaviour, IInteractable
     [SerializeField] private ChestType chestType = ChestType.Common;
 
     [Header("Accessory (Epic Only)")]
-    [Tooltip("Assign AccessoryPickup prefab here - only spawns for Epic chests")]
-    [SerializeField] private GameObject accessoryPrefab;
+    [Tooltip("Assign AccessoryPickup prefabs here - one will be randomly spawned for Epic chests")]
+    [SerializeField] private GameObject[] accessoryPrefabs;
 
     [Header("Settings")]
     [SerializeField] private LootTable lootTable;
@@ -209,15 +209,19 @@ public class ChestController : MonoBehaviour, IInteractable
         // Only Epic chests can drop accessories
         if (chestType != ChestType.Epic) return;
         
-        if (accessoryPrefab == null)
+        if (accessoryPrefabs == null || accessoryPrefabs.Length == 0)
         {
-            Debug.LogWarning("[Epic Chest] Accessory Prefab not assigned!");
+            Debug.LogWarning("[Epic Chest] No Accessory Prefabs assigned!");
             return;
         }
 
+        // Pick random accessory from array
+        GameObject chosenPrefab = accessoryPrefabs[Random.Range(0, accessoryPrefabs.Length)];
+        if (chosenPrefab == null) return;
+
         Vector3 spawnPos = spawnPoint != null ? spawnPoint.position : transform.position;
         
-        GameObject accessory = Instantiate(accessoryPrefab, spawnPos, Quaternion.identity);
+        GameObject accessory = Instantiate(chosenPrefab, spawnPos, Quaternion.identity);
         
         AccessoryPickup pickup = accessory.GetComponent<AccessoryPickup>();
         if (pickup != null)

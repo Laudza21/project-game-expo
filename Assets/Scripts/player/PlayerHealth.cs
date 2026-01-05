@@ -21,9 +21,8 @@ public class PlayerHealth : MonoBehaviour
         // Typically yes, or proportionally. Let's just update bounds for now.
         if (currentHealth > maxHealth) currentHealth = maxHealth;
         
-        // Optional: Heal difference if equip item provides instant health? 
-        // For now, let's keep current HP as is unless it exceeds max.
-        
+        // Notify listeners that max health has changed
+        OnMaxHealthChanged?.Invoke(maxHealth);
         OnHealthChanged?.Invoke(currentHealth);
     }
     
@@ -49,6 +48,7 @@ public class PlayerHealth : MonoBehaviour
     public UnityEvent<int> OnDamageTaken;
     public UnityEvent<int> OnHealthChanged;
     public UnityEvent<int> OnHealed;
+    public UnityEvent<int> OnMaxHealthChanged; // NEW: Fired when max health changes
     public UnityEvent OnDeath;
     
     void Awake()
@@ -62,6 +62,7 @@ public class PlayerHealth : MonoBehaviour
         if (OnDamageTaken == null) OnDamageTaken = new UnityEvent<int>();
         if (OnHealthChanged == null) OnHealthChanged = new UnityEvent<int>();
         if (OnHealed == null) OnHealed = new UnityEvent<int>();
+        if (OnMaxHealthChanged == null) OnMaxHealthChanged = new UnityEvent<int>();
         if (OnDeath == null) OnDeath = new UnityEvent();
     }
     
