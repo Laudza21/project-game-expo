@@ -64,15 +64,16 @@ public class CircleStrafeBehaviour : SteeringBehaviour
         Vector2 toTarget = targetPosition - currentPosition;
         float distanceToTarget = toTarget.magnitude;
 
-        // Change direction randomly
-        if (strafeDirection == StrafeDirection.Random && Time.time >= nextDirectionChangeTime)
-        {
-            // Random chance to flip direction
-            if (Random.value > 0.7f)
-                currentDirection *= -1f;
-            
-            nextDirectionChangeTime = Time.time + directionChangeInterval + Random.Range(-0.5f, 0.5f);
-        }
+        // DISABLED: Random direction change causes spinning behavior
+        // Direction should be stable during strafe - only changes via SetDirection or ReverseDirection
+        // if (strafeDirection == StrafeDirection.Random && Time.time >= nextDirectionChangeTime)
+        // {
+        //     // Random chance to flip direction
+        //     if (Random.value > 0.7f)
+        //         currentDirection *= -1f;
+        //     
+        //     nextDirectionChangeTime = Time.time + directionChangeInterval + Random.Range(-0.5f, 0.5f);
+        // }
 
         // ========================================
         // CIRCLE-FOCUSED STRAFE LOGIC
@@ -142,6 +143,7 @@ public class CircleStrafeBehaviour : SteeringBehaviour
 
     private void OnDrawGizmosSelected()
     {
+        /*
         if (target == null)
             return;
 
@@ -181,6 +183,7 @@ public class CircleStrafeBehaviour : SteeringBehaviour
         Vector2 idealPos = (Vector2)target.position - toTarget.normalized * strafeRadius;
         Gizmos.color = Color.yellow;
         Gizmos.DrawWireSphere(idealPos, 0.3f);
+        */
     }
 
     private void DrawCircle(Vector2 center, float radius, int segments)

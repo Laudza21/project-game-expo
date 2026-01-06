@@ -11,14 +11,19 @@ public class WanderBehaviour : SteeringBehaviour
     [SerializeField] private float wanderJitter = 1f;
     [SerializeField] private float maxSpeed = 3f;
     [SerializeField] private float maxForce = 5f;
+    [SerializeField] private float directionChangeInterval = 0.5f; // How often to update direction
 
     private Vector2 wanderTarget;
+    private Vector2 cachedForward; // Cache direction when velocity is low
+    private float lastDirectionChangeTime;
 
     private void Start()
     {
         // Initialize wander target dengan random direction
         float angle = Random.Range(0f, 360f) * Mathf.Deg2Rad;
         wanderTarget = new Vector2(Mathf.Cos(angle), Mathf.Sin(angle)) * wanderRadius;
+        cachedForward = new Vector2(Mathf.Cos(angle), Mathf.Sin(angle));
+        lastDirectionChangeTime = Time.time;
     }
 
     public override Vector2 Calculate(Rigidbody2D agent)
@@ -26,23 +31,35 @@ public class WanderBehaviour : SteeringBehaviour
         if (!isEnabled || agent == null)
             return Vector2.zero;
 
-        // Add random jitter ke wander target
-        wanderTarget += new Vector2(
-            Random.Range(-1f, 1f) * wanderJitter,
-            Random.Range(-1f, 1f) * wanderJitter
-        );
-
-        // Normalize dan scale ke wander radius
-        wanderTarget = wanderTarget.normalized * wanderRadius;
-
-        // Project wander target ke depan agent
-        Vector2 currentVelocity = agent.linearVelocity;
-        Vector2 forward = currentVelocity.normalized;
-        
-        // Jika velocity terlalu kecil, gunakan direction random
-        if (currentVelocity.magnitude < 0.1f)
+        // TIME-BASED jitter instead of every-frame jitter (prevents spinning)
+        if (Time.time >= lastDirectionChangeTime + directionChangeInterval)
         {
-            forward = new Vector2(Random.Range(-1f, 1f), Random.Range(-1f, 1f)).normalized;
+            lastDirectionChangeTime = Time.time;
+            
+            // Add random jitter ke wander target periodically
+            wanderTarget += new Vector2(
+                Random.Range(-1f, 1f) * wanderJitter,
+                Random.Range(-1f, 1f) * wanderJitter
+            );
+
+            // Normalize dan scale ke wander radius
+            wanderTarget = wanderTarget.normalized * wanderRadius;
+        }
+
+        // Get forward direction
+        Vector2 currentVelocity = agent.linearVelocity;
+        Vector2 forward;
+        
+        // Use actual velocity if moving, otherwise use CACHED direction
+        if (currentVelocity.magnitude >= 0.1f)
+        {
+            forward = currentVelocity.normalized;
+            cachedForward = forward; // Update cache when moving
+        }
+        else
+        {
+            // Use cached forward direction instead of random every frame!
+            forward = cachedForward;
         }
 
         Vector2 targetPosition = agent.position + (forward * wanderDistance) + wanderTarget;
@@ -56,6 +73,7 @@ public class WanderBehaviour : SteeringBehaviour
 
     private void OnDrawGizmosSelected()
     {
+        /*
         if (!Application.isPlaying)
             return;
 
@@ -78,6 +96,7 @@ public class WanderBehaviour : SteeringBehaviour
         Vector2 targetPos = circleCenter + wanderTarget;
         Gizmos.DrawSphere(targetPos, 0.2f);
         Gizmos.DrawLine(rb.position, targetPos);
+        */
     }
 
     private void DrawCircle(Vector2 center, float radius, int segments)

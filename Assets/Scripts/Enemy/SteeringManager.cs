@@ -190,10 +190,13 @@ public class SteeringManager : MonoBehaviour
             RaycastHit2D hit = Physics2D.CircleCast(rb.position, castRadius, desiredVelocity.normalized, checkDistance, collisionMask);
             
             // DEBUG: Visualisasi Raycast
+            // DEBUG: Visualisasi Raycast
+            /*
             #if UNITY_EDITOR
             Color debugColor = (hit.collider != null) ? Color.red : Color.green;
             Debug.DrawLine(rb.position, rb.position + desiredVelocity.normalized * (checkDistance + castRadius), debugColor);
             #endif
+            */
 
             if (hit.collider != null && !hit.collider.isTrigger)
             {
@@ -208,9 +211,11 @@ public class SteeringManager : MonoBehaviour
                     if (wallNormal == Vector2.zero) wallNormal = -desiredVelocity.normalized;
                     
                     desiredVelocity = wallNormal * 2.0f; // Push OUT
+                    /*
                     #if UNITY_EDITOR
                     Debug.DrawRay(rb.position, desiredVelocity, Color.magenta, 0.1f);
                     #endif
+                    */
                 }
                 else
                 {
@@ -262,6 +267,7 @@ public class SteeringManager : MonoBehaviour
         blendMode = mode;
     }
 
+    /*
     private void OnDrawGizmos()
     {
         if (!Application.isPlaying || rb == null)
@@ -271,4 +277,5 @@ public class SteeringManager : MonoBehaviour
         Gizmos.color = Color.blue;
         Gizmos.DrawRay(rb.position, rb.linearVelocity);
     }
+    */
 }

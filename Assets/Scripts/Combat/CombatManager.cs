@@ -13,9 +13,11 @@ public class CombatManager : MonoBehaviour
     
     [Header("Attack Token Settings")]
     [Tooltip("Maksimum enemy yang boleh attack bersamaan")]
-    [SerializeField] private int maxConcurrentAttackers = 1; // WAS 3 - Hanya 1 attacker sekaligus!
+    [SerializeField] private int maxConcurrentAttackers = 1;
+    [Tooltip("Cooldown per-enemy setelah attack (memaksa rotasi)")]
+    [SerializeField] private float perEnemyAttackCooldown = 2.5f;
     [Tooltip("Durasi minimum antara attack token release")]
-    [SerializeField] private float attackTokenCooldown = 1.5f; // WAS 0.5f - Jeda lebih lama
+    [SerializeField] private float attackTokenCooldown = 1.5f;
     
     [Header("Combat Slot Settings")]
     [Tooltip("Jarak slot dari player")]
@@ -32,6 +34,9 @@ public class CombatManager : MonoBehaviour
     // Attack Token System
     private HashSet<GameObject> currentAttackers = new HashSet<GameObject>();
     private float lastTokenReleaseTime;
+    
+    // Attack Rotation System - track per-enemy cooldowns
+    private Dictionary<GameObject, float> enemyAttackCooldowns = new Dictionary<GameObject, float>();
     
     // Combat Slot System
     private Dictionary<int, GameObject> slotAssignments = new Dictionary<int, GameObject>();
@@ -160,6 +165,7 @@ public class CombatManager : MonoBehaviour
     
     /// <summary>
     /// Enemy meminta ijin untuk attack. Return true jika diijinkan.
+    /// Sekarang dengan ROTATION SYSTEM - enemy yang baru attack harus tunggu giliran.
     /// </summary>
     public bool RequestAttackToken(GameObject enemy)
     {
@@ -167,6 +173,21 @@ public class CombatManager : MonoBehaviour
         
         // Sudah punya token?
         if (currentAttackers.Contains(enemy)) return true;
+        
+        // ROTATION CHECK: Apakah enemy ini masih dalam cooldown?
+        if (enemyAttackCooldowns.TryGetValue(enemy, out float cooldownEnd))
+        {
+            if (Time.time < cooldownEnd)
+            {
+                // Masih dalam cooldown! Harus tunggu giliran lain.
+                return false;
+            }
+            else
+            {
+                // Cooldown selesai, hapus dari tracking
+                enemyAttackCooldowns.Remove(enemy);
+            }
+        }
         
         // Slot tersedia?
         if (currentAttackers.Count < maxConcurrentAttackers)
@@ -180,6 +201,7 @@ public class CombatManager : MonoBehaviour
     
     /// <summary>
     /// Enemy melepaskan token setelah selesai attack.
+    /// Sekarang SET COOLDOWN untuk memaksa rotasi ke enemy lain.
     /// </summary>
     public void ReleaseAttackToken(GameObject enemy)
     {
@@ -188,6 +210,9 @@ public class CombatManager : MonoBehaviour
         if (currentAttackers.Remove(enemy))
         {
             lastTokenReleaseTime = Time.time;
+            
+            // SET ROTATION COOLDOWN - enemy ini harus tunggu sebelum bisa attack lagi
+            enemyAttackCooldowns[enemy] = Time.time + perEnemyAttackCooldown;
         }
     }
     
@@ -197,6 +222,34 @@ public class CombatManager : MonoBehaviour
     public bool HasAttackToken(GameObject enemy)
     {
         return currentAttackers.Contains(enemy);
+    }
+    
+    /// <summary>
+    /// Cek apakah enemy sedang dalam rotation cooldown (baru saja attack).
+    /// </summary>
+    public bool IsInAttackCooldown(GameObject enemy)
+    {
+        if (enemy == null) return false;
+        
+        if (enemyAttackCooldowns.TryGetValue(enemy, out float cooldownEnd))
+        {
+            return Time.time < cooldownEnd;
+        }
+        return false;
+    }
+    
+    /// <summary>
+    /// Get sisa waktu cooldown untuk enemy (untuk debug/UI).
+    /// </summary>
+    public float GetAttackCooldownRemaining(GameObject enemy)
+    {
+        if (enemy == null) return 0f;
+        
+        if (enemyAttackCooldowns.TryGetValue(enemy, out float cooldownEnd))
+        {
+            return Mathf.Max(0f, cooldownEnd - Time.time);
+        }
+        return 0f;
     }
     
     // ==========================================
@@ -704,6 +757,10 @@ public class CombatManager : MonoBehaviour
         ReleaseAttackToken(enemy);
         ReleaseCombatSlot(enemy);
         UnregisterAwareEnemy(enemy);
+        
+        // Clean up attack cooldown tracking
+        if (enemyAttackCooldowns.ContainsKey(enemy))
+            enemyAttackCooldowns.Remove(enemy);
     }
     
     /// <summary>

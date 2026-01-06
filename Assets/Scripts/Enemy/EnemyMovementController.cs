@@ -273,7 +273,18 @@ public class EnemyMovementController : MonoBehaviour
             if (currentPath != null && currentPath.Count > 0)
             {
                 // ===== NARROW PATH QUEUE CHECK =====
-                bool shouldWait = CheckNarrowPathQueue();
+                bool shouldWait = false;
+                try 
+                {
+                    shouldWait = CheckNarrowPathQueue();
+                }
+                catch (System.Exception ex)
+                {
+                    // Fail safe: If narrow path system errors, ignore it and continue moving
+                    Debug.LogWarning($"[{gameObject.name}] NarrowPathQueue Error: {ex.Message}. Disabling narrow check for this frame.");
+                    shouldWait = false;
+                }
+
                 if (shouldWait)
                 {
                     // Slow down dramatically while waiting
@@ -463,6 +474,12 @@ public class EnemyMovementController : MonoBehaviour
             seekBehaviour.UseArrival = true;
         }
         separationBehaviour.IsEnabled = true;
+        
+        // CRITICAL: Enable obstacle avoidance for patrol so enemies don't walk through walls!
+        if (avoidObstacleBehaviour != null)
+        {
+            avoidObstacleBehaviour.IsEnabled = true;
+        }
     }
     
     /// <summary>
@@ -582,6 +599,10 @@ public class EnemyMovementController : MonoBehaviour
 
         separationBehaviour.IsEnabled = true;
         separationBehaviour.ExtraRepulsionTarget = null; // Don't avoid target when chasing!
+
+        // CRITICAL: Ensure obstacle avoidance is enabled for Chase!
+        if (avoidObstacleBehaviour != null)
+            avoidObstacleBehaviour.IsEnabled = true;
     }
 
     private void UpdatePath(Vector3 targetPos)
@@ -786,37 +807,79 @@ public class EnemyMovementController : MonoBehaviour
     public void SetCircleStrafeMode(Transform target, float? customRadius = null)
     {
         DisableAllMovement();
-        circleStrafeBehaviour.IsEnabled = true;
-        circleStrafeBehaviour.Target = target;
         
         // Determine base radius
         float baseRadius = customRadius ?? optimalStrafeDistance;
         
         // Use CombatManager for unique radius per enemy (different orbits = no collision)
+        float uniqueRadius = baseRadius;
+        float strafeDir = 1f;
+        
         if (CombatManager.Instance != null)
         {
-            // Get slot-based radius (each enemy on different orbit)
-            float uniqueRadius = CombatManager.Instance.GetEnemyStrafeRadius(gameObject, baseRadius);
+            uniqueRadius = CombatManager.Instance.GetEnemyStrafeRadius(gameObject, baseRadius);
+            strafeDir = CombatManager.Instance.GetEnemyStrafeDirection(gameObject);
+        }
+        
+        // CHECK: Validate that strafe position is walkable (not in a wall)
+        bool canStrafe = true;
+        if (Pathfinding.PathfindingManager.Instance != null)
+        {
+            var grid = Pathfinding.PathfindingManager.Instance.GetGrid();
+            if (grid != null && target != null)
+            {
+                // Check positions around the target at strafe radius
+                Vector2 toTarget = ((Vector2)target.position - (Vector2)transform.position).normalized;
+                Vector2 tangent = Vector2.Perpendicular(toTarget) * strafeDir;
+                Vector3 strafePos = transform.position + (Vector3)(tangent * 2f); // Check 2 units ahead
+                
+                var node = grid.NodeFromWorldPoint(strafePos);
+                if (node == null || !node.walkable)
+                {
+                    canStrafe = false;
+                }
+            }
+        }
+        
+        if (canStrafe)
+        {
+            // Normal circle strafe
+            circleStrafeBehaviour.IsEnabled = true;
+            circleStrafeBehaviour.Target = target;
             circleStrafeBehaviour.StrafeRadius = uniqueRadius;
-            
-            // Get slot-based direction (locked, no random flip)
-            float strafeDir = CombatManager.Instance.GetEnemyStrafeDirection(gameObject);
-            circleStrafeBehaviour.SetDirection(strafeDir > 0); // true = clockwise
+            circleStrafeBehaviour.SetDirection(strafeDir > 0);
         }
         else
         {
-            // Fallback jika tidak ada CombatManager
-            circleStrafeBehaviour.StrafeRadius = baseRadius;
-            circleStrafeBehaviour.RandomizeDirection();
+            // FALLBACK: Use pathfinding-based retreat instead of strafe into wall
+            if (Pathfinding.PathfindingManager.Instance != null && target != null)
+            {
+                isPathfinding = true;
+                pathfindingMode = PathfindingMode.Flee;
+                pathfindingTarget = target;
+                
+                // Find safe retreat position away from wall
+                Vector2 retreatDir = ((Vector2)transform.position - (Vector2)target.position).normalized;
+                pathfindingDestination = transform.position + (Vector3)(retreatDir * 4f);
+                
+                seekBehaviour.IsEnabled = true;
+                seekBehaviour.Target = null;
+                UpdatePath(pathfindingDestination.Value);
+            }
+            else
+            {
+                // Absolute fallback: still try strafe with obstacle avoidance
+                circleStrafeBehaviour.IsEnabled = true;
+                circleStrafeBehaviour.Target = target;
+                circleStrafeBehaviour.StrafeRadius = uniqueRadius;
+            }
         }
-            
+        
         separationBehaviour.IsEnabled = true;
         
-        // CRITICAL: Enable obstacle avoidance so enemy doesn't strafe INTO walls/chests!
+        // Enable obstacle avoidance as extra safety
         if (avoidObstacleBehaviour != null)
-        {
             avoidObstacleBehaviour.IsEnabled = true;
-        }
     }
 
     public void ReverseStrafeDirection()
@@ -876,6 +939,10 @@ public class EnemyMovementController : MonoBehaviour
             }
         }
         separationBehaviour.IsEnabled = true;
+        
+        // CRITICAL: Enable obstacle avoidance for battle modes!
+        if (avoidObstacleBehaviour != null)
+            avoidObstacleBehaviour.IsEnabled = true;
     }
 
     public void SetFleeMode(Transform threat)
@@ -907,6 +974,10 @@ public class EnemyMovementController : MonoBehaviour
             fleeBehaviour.Threat = threat;
         }
         separationBehaviour.IsEnabled = true;
+        
+        // CRITICAL: Enable obstacle avoidance for battle modes!
+        if (avoidObstacleBehaviour != null)
+            avoidObstacleBehaviour.IsEnabled = true;
     }
     
     public void SetSurroundMode(Transform target)
@@ -993,6 +1064,7 @@ public class EnemyMovementController : MonoBehaviour
 
     public void SetSeekTarget(Transform target) { seekBehaviour.Target = target; }
     public bool IsFormationInPosition(float tolerance) => formationSeekBehaviour != null && formationSeekBehaviour.IsInPosition(tolerance);
+    public bool IsRetreating => (fleeBehaviour != null && fleeBehaviour.IsEnabled) || (isPathfinding && pathfindingMode == PathfindingMode.Flee);
     
     private void OnDrawGizmosSelected()
     {

@@ -63,13 +63,17 @@ public abstract class BaseEnemyAI : MonoBehaviour
     protected Collider2D myBodyCollider;
     protected Collider2D playerBodyCollider;
     protected Rigidbody2D playerRb;
-
+    protected SpriteRenderer spriteRenderer;
+    
     // State Variables
+    protected Vector3 initialScale;
+    protected Color originalColor;
     protected float stunEndTime;
     protected float hesitateEndTime;
     protected float nextWanderIdleTime;
+
     protected float idleEndTime;
-    
+
     // Chase Memory & Search Variables (Last Known Position System)
     protected Vector3 lastKnownPlayerPosition;
     protected Vector2 lastKnownPlayerVelocity; // Track player movement for predictive search
@@ -112,13 +116,26 @@ public abstract class BaseEnemyAI : MonoBehaviour
         health = GetComponent<EnemyHealth>();
         enemyAnimator = GetComponentInChildren<EnemyAnimator>();
         movementController = GetComponent<EnemyMovementController>();
+        spriteRenderer = GetComponentInChildren<SpriteRenderer>();
         
         movementController.Initialize(formationManager);
         SetupHealthEvents();
+        initialScale = transform.localScale;
+        
+        if (spriteRenderer != null)
+        {
+            originalColor = spriteRenderer.color;
+        }
     }
 
     protected virtual void Start()
     {
+        if (spriteRenderer != null)
+        {
+            // Move from Start to Awake to ensure it's ready for OnEnable
+            // originalColor = spriteRenderer.color; 
+        }
+
         if (player == null)
         {
             GameObject playerObj = GameObject.FindGameObjectWithTag("Player");
@@ -141,6 +158,65 @@ public abstract class BaseEnemyAI : MonoBehaviour
             $"myBodyCollider = {(myBodyCollider != null ? myBodyCollider.gameObject.name : "NULL")} | " +
             $"playerBodyCollider = {(playerBodyCollider != null ? playerBodyCollider.gameObject.name : "NULL")}");
         #endif
+    }
+
+    [Header("Pooling Settings")]
+    [SerializeField] protected bool shouldResetOnEnable = true; // Set false for Bosses!
+
+    protected virtual void OnEnable()
+    {
+        if (!shouldResetOnEnable) return;
+        
+        // RESET STATE FOR POOLING
+        isLowHealth = false;
+        isUsingAreaPatrol = false;
+        
+        // Reset Visuals
+        if (spriteRenderer != null)
+        {
+            spriteRenderer.color = originalColor; // Alpha = 1
+        }
+        
+        // Ensure Physics is reset
+        if (rb != null)
+        {
+            rb.linearVelocity = Vector2.zero;
+            rb.simulated = true;
+            rb.WakeUp();
+        }
+
+        // Reset Health if component exists
+        if (health != null)
+        {
+            health.SetHealth(health.MaxHealth); // Max heal
+        }
+        
+        // Reset Sprite Alpha (CRITICAL Fix for Pooling)
+        if (spriteRenderer != null)
+        {
+            // Reset to opaque (or original color)
+            // Note: originalColor is captured in Awake. If Awake hasn't run, use white.
+            if (originalColor.a == 0) originalColor = Color.white; 
+            spriteRenderer.color = originalColor;
+        }
+        
+        // Reset State
+        currentState = AIState.Patrol;
+        // Logic initialization will be picked up by Update
+    }
+
+    protected virtual void OnDisable()
+    {
+        // STOP LOGIC FOR CULLING/POOLING
+        if (movementController != null)
+        {
+            movementController.StopMoving();
+        }
+        
+        if (rb != null)
+        {
+            rb.linearVelocity = Vector2.zero;
+        }
 
         // HOTFIX: Enforce 38s chase memory if inspector has old value
         if (chaseMemoryDuration < 38f)
@@ -240,25 +316,7 @@ public abstract class BaseEnemyAI : MonoBehaviour
         }
     }
 
-    protected virtual void Update()
-    {
-        if (player == null) return;
-
-        // Track Player Velocity (if moving) for Predictive Search
-        // CRITICAL: Only update if we can SEE the player! Otherwise it's cheating/omniscient.
-        if (playerRb != null && playerRb.linearVelocity.sqrMagnitude > 0.1f && HasLineOfSightToPlayer(false))
-        {
-            lastKnownPlayerVelocity = playerRb.linearVelocity;
-        }
-
-        if (isUsingAreaPatrol && currentState == AIState.Patrol)
-            UpdateAreaPatrol();
-            
-        UpdateState();
-        CheckHealthStatus();
-        UpdateFacing();
-        UpdateAnimationState();
-    }
+    // Old Update removed. Replaced by Update() below.
 
     protected virtual void UpdateAnimationState()
     {
@@ -319,9 +377,9 @@ public abstract class BaseEnemyAI : MonoBehaviour
             // Only flip sprite (Scale X) if there is significant horizontal movement
             // If moving vertically (Up/Down), keep previous facing direction
             if (rb.linearVelocity.x > 0.1f)
-                transform.localScale = new Vector3(1, 1, 1);
+                transform.localScale = new Vector3(Mathf.Abs(initialScale.x), initialScale.y, initialScale.z);
             else if (rb.linearVelocity.x < -0.1f)
-                transform.localScale = new Vector3(-1, 1, 1);
+                transform.localScale = new Vector3(-Mathf.Abs(initialScale.x), initialScale.y, initialScale.z);
         }
         // Priority 2: Face Player (if standing still AND aware of player)
         else if (IsAwareState(currentState))
@@ -329,9 +387,9 @@ public abstract class BaseEnemyAI : MonoBehaviour
             Vector2 directionToPlayer = ((Vector2)player.position - (Vector2)transform.position);
             
             if (directionToPlayer.x > 0.1f)
-                transform.localScale = new Vector3(1, 1, 1);
+                transform.localScale = new Vector3(Mathf.Abs(initialScale.x), initialScale.y, initialScale.z);
             else if (directionToPlayer.x < -0.1f)
-                transform.localScale = new Vector3(-1, 1, 1);
+                transform.localScale = new Vector3(-Mathf.Abs(initialScale.x), initialScale.y, initialScale.z);
             
             // Update animator facing
             if (enemyAnimator != null && directionToPlayer.magnitude > 0.1f)
@@ -341,10 +399,78 @@ public abstract class BaseEnemyAI : MonoBehaviour
         }
     }
 
+    protected virtual void Update()
+    {
+        // Don't update if disabled or dead
+        if (health != null && health.IsDead) return;
+
+        // PERFORMANCE MODE (Optimized for off-screen/far enemies)
+        if (isInPerformanceMode)
+        {
+            // Only update Patrol logic (Movement)
+            // Skip Detection, Combat, and Vision checks
+            if (currentState == AIState.Patrol || currentState == AIState.PatrolIdle)
+            {
+                // Simplified Patrol update (blind patrol)
+                if (isUsingAreaPatrol)
+                {
+                    // Check if reached destination blindly
+                    float dist = Vector2.Distance(transform.position, currentZoneTarget);
+                    if (dist < areaPointReachDistance)
+                    {
+                        // Pick new point and Move
+                         currentZoneTarget = patrolZone.GetRandomPointInZone();
+                         movementController.SetPatrolDestination(currentZoneTarget);
+                    }
+                    // Else: Continue moving to existing target (handled by Controller)
+                }
+                else
+                {
+                    // Wander patrol logic simplified
+                    UpdateWanderPatrol();
+                }
+            }
+            return; // Skip the rest of Update
+        }
+
+        // FULL UPDATE LOGIC
+        if (player == null) return;
+
+        // Track Player Velocity (if moving) for Predictive Search
+        if (playerRb != null && playerRb.linearVelocity.sqrMagnitude > 0.1f && HasLineOfSightToPlayer(false))
+        {
+            lastKnownPlayerVelocity = playerRb.linearVelocity;
+        }
+
+        if (isUsingAreaPatrol && currentState == AIState.Patrol)
+            UpdateAreaPatrol();
+
+        CheckHealthStatus();
+        UpdateState();
+        UpdateAnimationState(); // Fixed name
+        UpdateFacing(); // Ensure facing is updated
+    }
+    
+    // Performance Optimization Control
+    public bool isInPerformanceMode = false;
+    
+    public void SetPerformanceMode(bool optimized)
+    {
+        isInPerformanceMode = optimized;
+        if (optimized)
+        {
+            // Force safe state
+            if (currentState != AIState.Patrol && currentState != AIState.PatrolIdle)
+            {
+                ChangeState(AIState.Patrol);
+            }
+        }
+    }
+
     protected virtual void UpdateState()
     {
         float distanceToPlayer = GetDistanceToPlayer();
-
+        
         // REMOVED: Flee behaviour saat low health
         // Enemy sekarang tetap menyerang sampai mati
         // if (isLowHealth)
@@ -411,9 +537,15 @@ public abstract class BaseEnemyAI : MonoBehaviour
             hesitateEndTime = Time.time + reactionTime;
             ChangeState(AIState.Hesitate);
         }
-        else if (!isUsingAreaPatrol && Time.time >= nextWanderIdleTime)
+        else if (!isUsingAreaPatrol)
         {
-           ChangeState(AIState.PatrolIdle);
+            // WANDER PATROL WITH PATHFINDING
+            UpdateWanderPatrol();
+            
+            if (Time.time >= nextWanderIdleTime)
+            {
+               ChangeState(AIState.PatrolIdle);
+            }
         }
     }
 
@@ -605,15 +737,76 @@ public abstract class BaseEnemyAI : MonoBehaviour
     {
         if (isUsingAreaPatrol)
         {
-            movementController.SetPatrolMode(false); // Seek
+            movementController.SetPatrolMode(false); // Seek with pathfinding
             currentZoneTarget = patrolZone.GetRandomPointInZone();
             if (patrolManager != null && patrolManager.AllowZoneSwitching)
                 zoneChangeTime = Time.time + Random.Range(patrolManager.MinTimeInZone, patrolManager.MaxTimeInZone);
         }
         else
         {
-            movementController.SetPatrolMode(true); // Wander
+            // WANDER PATROL WITH PATHFINDING (same as area patrol!)
+            movementController.SetPatrolMode(false); // Use pathfinding, not wander steering
+            GenerateRandomWanderDestination();
             nextWanderIdleTime = Time.time + Random.Range(wanderIdleIntervalMin, wanderIdleIntervalMax);
+        }
+    }
+    
+    /// <summary>
+    /// Generate random walkable destination for wander patrol with pathfinding
+    /// </summary>
+    protected void GenerateRandomWanderDestination()
+    {
+        if (Pathfinding.PathfindingManager.Instance == null) return;
+        
+        var grid = Pathfinding.PathfindingManager.Instance.GetGrid();
+        if (grid == null) return;
+        
+        // Try to find a walkable random point within wander range
+        float wanderRange = 6f;
+        for (int attempt = 0; attempt < 10; attempt++)
+        {
+            Vector3 randomOffset = new Vector3(
+                Random.Range(-wanderRange, wanderRange),
+                Random.Range(-wanderRange, wanderRange),
+                0
+            );
+            Vector3 randomPoint = transform.position + randomOffset;
+            
+            var node = grid.NodeFromWorldPoint(randomPoint);
+            if (node != null && node.walkable)
+            {
+                currentZoneTarget = randomPoint;
+                movementController.SetPatrolDestination(currentZoneTarget);
+                return;
+            }
+        }
+        
+        // Fallback: use current position (just idle)
+        currentZoneTarget = transform.position;
+    }
+    
+    /// <summary>
+    /// Update wander patrol - check if reached destination, generate new one
+    /// </summary>
+    protected void UpdateWanderPatrol()
+    {
+        // Logic fixed: Don't spam SetPatrolDestination every frame!
+        // EnemyMovementController handles path following automatically.
+
+        
+        float distanceToTarget = Vector2.Distance(transform.position, currentZoneTarget);
+        
+        // Reached destination? Generate new random point
+        if (distanceToTarget <= 1.5f)
+        {
+            // Small chance to idle
+            if (Random.value < 0.3f)
+            {
+                ChangeState(AIState.PatrolIdle);
+                return;
+            }
+            
+            GenerateRandomWanderDestination();
         }
     }
     
@@ -754,6 +947,50 @@ public abstract class BaseEnemyAI : MonoBehaviour
         if (patrolTargetTransform != null) Destroy(patrolTargetTransform.gameObject);
         if (enemyAnimator != null) enemyAnimator.PlayDeath();
         if (movementController != null) movementController.StopMoving();
+        
         this.enabled = false;
+
+        // Perform cleanup/despawn after animation delay
+        StartCoroutine(DeathDespawnSequence());
+    }
+
+    private System.Collections.IEnumerator DeathDespawnSequence()
+    {
+        // 1. Wait for death animation (approx 1s)
+        yield return new WaitForSeconds(1.0f);
+        
+        // 2. Fade Out (0.5s - 1s)
+        if (spriteRenderer != null)
+        {
+            float fadeDuration = 1.0f;
+            float elapsed = 0f;
+            Color startColor = spriteRenderer.color; // Should be originalColor usually
+            Color endColor = new Color(originalColor.r, originalColor.g, originalColor.b, 0f);
+            
+            while (elapsed < fadeDuration)
+            {
+                elapsed += Time.deltaTime;
+                float t = elapsed / fadeDuration;
+                spriteRenderer.color = Color.Lerp(startColor, endColor, t);
+                yield return null;
+            }
+            // Ensure fully transparent
+            spriteRenderer.color = endColor;
+        }
+        else
+        {
+            // Just wait extra if no renderer found
+            yield return new WaitForSeconds(0.5f);
+        }
+
+        // 3. Despawn / Destroy
+        if (SimpleObjectPool.Instance != null)
+        {
+            SimpleObjectPool.Instance.Despawn(gameObject);
+        }
+        else
+        {
+            Destroy(gameObject);
+        }
     }
 }

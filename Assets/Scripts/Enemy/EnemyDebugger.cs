@@ -28,6 +28,7 @@ public class EnemyDebugger : MonoBehaviour
 
     private void OnDrawGizmosSelected()
     {
+        /*
         if (ai == null) ai = GetComponent<BaseEnemyAI>();
         if (ai == null) return;
 
@@ -122,6 +123,7 @@ public class EnemyDebugger : MonoBehaviour
             }
         );
         #endif
+        */
     }
 
     private Color GetStateColor()

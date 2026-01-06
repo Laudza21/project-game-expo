@@ -91,6 +91,7 @@ public class FleeBehaviour : SteeringBehaviour
 
     private void OnDrawGizmosSelected()
     {
+        /*
         if (threat != null && onlyFleeWithinRange)
         {
             Gizmos.color = Color.red;
@@ -106,5 +107,6 @@ public class FleeBehaviour : SteeringBehaviour
                 Gizmos.DrawRay(transform.position, directionalBias * 2f);
             }
         }
+        */
     }
 }

@@ -1628,6 +1628,7 @@ public class GoblinSpearAI : BaseEnemyAI
     // Gizmos SELALU tampil (tidak harus selected)
     private void OnDrawGizmos()
     {
+        /*
         if (!Application.isPlaying) return;
         if (player == null) return;
         
@@ -1719,6 +1720,7 @@ public class GoblinSpearAI : BaseEnemyAI
                 Gizmos.DrawLine(transform.position, slotPos);
             }
         }
+        */
     }
     
     private Color GetStateColor(AIState state)
@@ -1751,6 +1753,7 @@ public class GoblinSpearAI : BaseEnemyAI
 
     private void OnDrawGizmosSelected()
     {
+        /*
         // Spear attack range (orange)
         Gizmos.color = new Color(1f, 0.5f, 0f, 0.3f);
         Gizmos.DrawWireSphere(transform.position, attackRange);
@@ -1773,6 +1776,7 @@ public class GoblinSpearAI : BaseEnemyAI
             Vector2 behindPlayer = -playerFacing * 4f;
             Gizmos.DrawRay(player.position, behindPlayer);
         }
+        */
     }
     #endif
     public void PlaySpearAttackSound()

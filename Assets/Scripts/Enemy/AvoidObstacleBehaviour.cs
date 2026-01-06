@@ -127,6 +127,7 @@ public class AvoidObstacleBehaviour : SteeringBehaviour
             }
             
             // Debug visualization
+            /*
             if (showDebugRays)
             {
                 Color rayColor;
@@ -137,6 +138,7 @@ public class AvoidObstacleBehaviour : SteeringBehaviour
                     
                 Debug.DrawRay(agent.position, dir * (hit.collider != null ? hit.distance : detectionDistance), rayColor);
             }
+            */
         }
         
         // Restore trigger query setting
@@ -150,10 +152,12 @@ public class AvoidObstacleBehaviour : SteeringBehaviour
         Vector2 bestDir = rayDirections[bestIndex];
         
         // Debug: Show chosen direction
+        /*
         if (showDebugRays)
         {
             Debug.DrawRay(agent.position, bestDir * 2f, Color.magenta, 0.1f);
         }
+        */
         
         // Return force DIRECTLY toward best direction
         // The higher the danger, the more force we apply

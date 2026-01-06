@@ -141,7 +141,7 @@ namespace Pathfinding
                 return 0;
 
             // Use actual grid node diameter for accurate stepping
-            float stepSize = grid.nodeRadius * 2f;
+            float stepSize = Mathf.Max(grid.nodeRadius * 2f, 0.5f); // Safety floor to prevent hanging
 
             int widthX = 1; // Count center node
             int widthY = 1;

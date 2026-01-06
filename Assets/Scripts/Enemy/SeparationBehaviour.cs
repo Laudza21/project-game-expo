@@ -303,6 +303,7 @@ public class SeparationBehaviour : SteeringBehaviour
 
     private void OnDrawGizmosSelected()
     {
+        /*
         Rigidbody2D rb = GetComponent<Rigidbody2D>();
         if (rb == null)
             return;
@@ -329,5 +330,6 @@ public class SeparationBehaviour : SteeringBehaviour
                 Gizmos.DrawLine(transform.position, neighbor.transform.position);
             }
         }
+        */
     }
 }

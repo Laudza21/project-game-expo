@@ -71,6 +71,7 @@ public class SeekBehaviour : SteeringBehaviour
 
     private void OnDrawGizmosSelected()
     {
+        /*
         if (target != null)
         {
             Gizmos.color = Color.green;
@@ -82,5 +83,6 @@ public class SeekBehaviour : SteeringBehaviour
                 Gizmos.DrawWireSphere(target.position, arrivalRadius);
             }
         }
+        */
     }
 }

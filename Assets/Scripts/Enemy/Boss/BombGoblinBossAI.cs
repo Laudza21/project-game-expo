@@ -99,7 +99,8 @@ public class BombGoblinBossAI : BaseEnemyAI
     protected override void Awake()
     {
         base.Awake();
-        // NOTE: enemyAnimator is initialized by base.Awake() - do not reassign!
+        // Force DISABLE reset on enable for Boss, to preserve Phase logic
+        shouldResetOnEnable = false;
         
         // Setup throw point if not assigned
         if (throwPoint == null)
@@ -323,7 +324,20 @@ public class BombGoblinBossAI : BaseEnemyAI
         float lateralOffset = Random.Range(-1.5f, 1.5f);
         Vector3 spawnPos = baseSpawnPos + (Vector3)(perpendicular * lateralOffset);
         
-        GameObject minion = Instantiate(prefab, spawnPos, Quaternion.identity);
+        GameObject minion;
+        if (SimpleObjectPool.Instance != null)
+        {
+            minion = SimpleObjectPool.Instance.Spawn(prefab, spawnPos, Quaternion.identity);
+            
+            // Ensure optimizer is attached
+            if (minion.GetComponent<EnemyOptimizer>() == null)
+                minion.AddComponent<EnemyOptimizer>();
+        }
+        else
+        {
+            minion = Instantiate(prefab, spawnPos, Quaternion.identity);
+        }
+        
         activeMinions.Add(minion);
         
         LogDebug($"Spawned shield minion: {prefab.name} at {spawnPos}");
@@ -488,29 +502,62 @@ public class BombGoblinBossAI : BaseEnemyAI
         
         PlaySound(throwSound);
         
-        // Calculate throw direction with prediction
-        Vector3 targetPos = player.position;
-        Vector2 direction = (targetPos - throwPoint.position).normalized;
+        // 1. Get Projectile Settings (to match flight time)
+        // Assume default maxFlightTime is 1.5f if we can't read it, but let's estimate 1.2f for better feel
+        float flightTime = 1.2f; 
         
+        // 2. Predictive Aiming
+        Vector3 targetPos = player.position;
+        if (playerRb != null)
+        {
+            // Predict where player will be. Clamped to avoid shooting way off-screen.
+            Vector2 playerVel = playerRb.linearVelocity;
+            Vector3 prediction = (Vector3)(playerVel * flightTime * 0.8f); // 0.8f prediction factor
+            targetPos += prediction;
+        }
+        
+        // 3. Aim Variance (Randomness to prevent 100% accuracy)
+        float variance = 0.5f; // Small radius variance
+        targetPos += (Vector3)(Random.insideUnitCircle * variance);
+        
+        // 4. Calculate Direction & Distance
+        Vector2 direction = (targetPos - throwPoint.position).normalized;
+        float distanceToTarget = Vector2.Distance(throwPoint.position, targetPos);
+        
+        // 5. Calculate Required Force
+        // Formula from BombProjectile: distance = force * flightDuration * 0.5f
+        // So: force = distance / (flightDuration * 0.5f)
+        // Note: We send this custom force to override the default Inspector value
+        // Use the projectile's actual Main Flight Time if possible, but 1.5f is standard
+        float projectileFlightTime = 1.5f; // Must match BombProjectile.maxFlightTime default
+        float neededForce = distanceToTarget / (projectileFlightTime * 0.5f);
+        
+        // Clamp force to sane limits (too close vs too far)
+        neededForce = Mathf.Clamp(neededForce, 2f, 25f);
+
         // Spawn bomb projectile
         GameObject bomb = Instantiate(bombProjectilePrefab, throwPoint.position, Quaternion.identity);
         
         BombProjectile projectile = bomb.GetComponent<BombProjectile>();
         if (projectile != null)
         {
-            projectile.Initialize(direction, throwForce, bombDamage);
+            // Pass the calculated force to hit the mark
+            projectile.Initialize(direction, neededForce, bombDamage);
+            
+            // NOTE: We rely on Projectile using maxFlightTime = 1.5. 
+            // If projectile uses input force to determine distance, this works.
         }
         else
         {
-            // Fallback: Add velocity directly
+            // Fallback for simple RB
             Rigidbody2D bombRb = bomb.GetComponent<Rigidbody2D>();
             if (bombRb != null)
             {
-                bombRb.linearVelocity = direction * throwForce;
+                bombRb.linearVelocity = direction * 10f; // Default if script missing
             }
         }
         
-        LogDebug($"Threw bomb toward player!");
+        LogDebug($"Threw bomb at {targetPos} (Dist: {distanceToTarget:F1}, Force: {neededForce:F1})");
     }
     
     // Called by Animation Event
@@ -696,7 +743,20 @@ public class BombGoblinBossAI : BaseEnemyAI
         Vector2 randomOffset = Random.insideUnitCircle * summonRadius;
         Vector3 spawnPos = transform.position + new Vector3(randomOffset.x, randomOffset.y, 0);
         
-        GameObject minion = Instantiate(prefab, spawnPos, Quaternion.identity);
+        GameObject minion;
+        if (SimpleObjectPool.Instance != null)
+        {
+            minion = SimpleObjectPool.Instance.Spawn(prefab, spawnPos, Quaternion.identity);
+            
+            // OPTIONAL: Ensure optimizer is attached (Strategy #3)
+            if (minion.GetComponent<EnemyOptimizer>() == null)
+                minion.AddComponent<EnemyOptimizer>();
+        }
+        else
+        {
+            minion = Instantiate(prefab, spawnPos, Quaternion.identity);
+        }
+        
         activeMinions.Add(minion);
         
         LogDebug($"Spawned minion: {prefab.name} at {spawnPos}");
@@ -795,47 +855,68 @@ public class BombGoblinBossAI : BaseEnemyAI
     #region Override Base Methods
     protected override void HandleChaseState(float distanceToPlayer)
     {
-        // Update last known position correctly (similar to other AI)
         bool canSeePlayer = HasLineOfSightToPlayer(false);
+        
         if (canSeePlayer)
         {
+            // Visual Memory Update
             lastKnownPlayerPosition = player.position;
-            // Boss rarely loses memory, but good to track
             chaseMemoryEndTime = Time.time + chaseMemoryDuration;
+            
+            // --- RANGE BASED MOVEMENT LOGIC ---
+            // Boss is Ranged, so he should maintain distance!
+            
+            float safeDistance = 3.5f; // Too close!
+            float sweetSpotMax = 8.0f; // Max attack range
+            
+            if (distanceToPlayer < safeDistance)
+            {
+                // Too close! Back off!
+                if (!movementController.IsRetreating) // Assuming property or just set it
+                    movementController.SetRetreatMode(player, false);
+            }
+            else if (distanceToPlayer > sweetSpotMax)
+            {
+                // Too far! Chase!
+                movementController.SetChaseMode(player);
+            }
+            else
+            {
+                // Sweet Spot (3.5 - 8.0)
+                // Stop chasing and focus on attacking
+                movementController.StopMoving();
+                
+                // Ensure facing player while standing still
+                Vector2 dir = (player.position - transform.position).normalized;
+                if (enemyAnimator != null) enemyAnimator.SetFacingDirection(dir);
+            }
         }
-        else if (Time.time <= chaseMemoryEndTime)
+        else // Cannot see player
         {
-             // FIX: If hidden, move to lastKnownPosition + OVERSHOOT (0.7m)
-             Vector3 chaseTarget = lastKnownPlayerPosition;
-             if (lastKnownPlayerVelocity.sqrMagnitude > 0.1f)
-             {
-                 chaseTarget += (Vector3)lastKnownPlayerVelocity.normalized * 0.7f;
-             }
-             
-             movementController.SetChaseDestination(chaseTarget);
-             
-             // Check distance to OVERSHOOT position
-             float distToTarget = Vector2.Distance(transform.position, chaseTarget);
-             if (distToTarget < 0.6f)
-             {
-                 // Boss reached the corner!
-                 // Unlike minions, Boss might not "Search" (Walk), but should stop chasing blindly.
-                 // Let's make him look around or throw a bomb.
-                 // For consistency, we switch to Pacing or Search.
-                 ChangeState(AIState.Search); 
-             }
-        }
-        else
-        {
-             // Use pathfinding to chase player (default fallback)
-             movementController.SetChaseMode(player);
-        }
-        
-        // Check if player escaped
-        if (distanceToPlayer > loseTargetRange && !HasLineOfSightToPlayer(false))
-        {
-            // Boss doesn't easily lose target - keep chasing
-            // Could implement search behavior here
+            if (Time.time <= chaseMemoryEndTime)
+            {
+                 // Move to last known position (Memory Chase)
+                 Vector3 chaseTarget = lastKnownPlayerPosition;
+                 // Predict movement into fog of war
+                 if (lastKnownPlayerVelocity.sqrMagnitude > 0.1f)
+                 {
+                     chaseTarget += (Vector3)lastKnownPlayerVelocity.normalized * 0.7f;
+                 }
+                 
+                 movementController.SetChaseDestination(chaseTarget);
+                 
+                 // If reached last known spot, switch to SEARCH
+                 float distToTarget = Vector2.Distance(transform.position, chaseTarget);
+                 if (distToTarget < 0.6f)
+                 {
+                     ChangeState(AIState.Search); 
+                 }
+            }
+            else
+            {
+                 // Memory expired, just standard chase attempt (or return to patrol)
+                 movementController.SetChaseMode(player);
+            }
         }
     }
 
@@ -897,6 +978,7 @@ public class BombGoblinBossAI : BaseEnemyAI
     #region Gizmos
     private void OnDrawGizmosSelected()
     {
+        /*
         // Attack range
         Gizmos.color = Color.red;
         Gizmos.DrawWireSphere(transform.position, attackRange);
@@ -920,6 +1002,7 @@ public class BombGoblinBossAI : BaseEnemyAI
                 Gizmos.DrawWireSphere(pos, 0.3f);
             }
         }
+        */
     }
     #endregion
 }

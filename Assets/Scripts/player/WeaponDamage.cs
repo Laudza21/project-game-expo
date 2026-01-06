@@ -72,6 +72,7 @@ public class WeaponDamage : MonoBehaviour
     // ==========================================
     void OnDrawGizmos()
     {
+        /*
         // Hanya gambar saat Play mode DAN GameObject aktif
         if (!Application.isPlaying) return;
         if (!gameObject.activeInHierarchy) return; // JANGAN gambar kalau disabled
@@ -93,5 +94,6 @@ public class WeaponDamage : MonoBehaviour
             Vector3 center = transform.position + (Vector3)circle.offset;
             Gizmos.DrawWireSphere(center, circle.radius);
         }
+        */
     }
 }
